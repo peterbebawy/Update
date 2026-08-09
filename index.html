@@ -367,6 +367,8 @@ function showLogin(){
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('appRoot').style.display = 'none';
 }
+```js
+```js
 function doLogin() {
   const username = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
@@ -408,20 +410,23 @@ function doLogin() {
 
       // إخفاء شاشة تسجيل الدخول
       const loginScreen = document.getElementById('loginScreen');
+
       if (loginScreen) {
+        loginScreen.classList.add('hidden');
         loginScreen.style.display = 'none';
       }
 
       // إظهار التطبيق
       const appRoot = document.getElementById('appRoot');
+
       if (appRoot) {
-        appRoot.style.display = 'block';
+        appRoot.style.display = '';
       } else {
         console.error('❌ appRoot غير موجود في الصفحة');
         return;
       }
 
-      // تشغيل التطبيق
+      // تشغيل التطبيق بعد تسجيل الدخول
       try {
         initApp();
       } catch (err) {
@@ -434,7 +439,26 @@ function doLogin() {
       errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
     });
 }
-  function initApp() {
+```
+
+  initApp();
+
+  // عرض المحتوى مباشرة بعد تسجيل الدخول
+  setTimeout(() => {
+    if (typeof renderBranches === 'function') {
+      console.log('📂 جاري عرض الفروع...');
+      renderBranches();
+    } else {
+      console.error('❌ renderBranches غير موجودة');
+    }
+  }, 100);
+
+} catch (err) {
+  console.error('❌ initApp error:', err);
+}
+```
+```js
+function initApp() {
   console.log("🚀 initApp started");
 
   // تحميل المستخدمين
@@ -450,10 +474,21 @@ function doLogin() {
       });
 
       console.log("👥 users:", usersData);
+
+      // بعد تحميل البيانات، اعرض الفروع مباشرة
+      if (typeof renderBranches === 'function') {
+        console.log("📂 عرض الفروع...");
+        renderBranches();
+      } else {
+        console.error("❌ renderBranches غير موجودة");
+      }
     })
     .catch(err => {
       console.error("❌ Users:", err);
     });
+}
+```
+
 
   // تحميل الأوردرات
   firebase.database().ref("orders").once("value")
