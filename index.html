@@ -206,6 +206,28 @@
       <button class="btn btn-accent" onclick="openAddBranch()">+ إضافة فرع</button>
     </div>
     <div id="branches-list"></div>
+    <div id="addBranchModal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h3>إضافة فرع</h3>
+
+    <input
+      type="text"
+      id="newBranchName"
+      class="input"
+      placeholder="اسم الفرع"
+    >
+
+    <div style="display:flex;gap:10px;margin-top:15px;">
+      <button class="btn btn-accent" onclick="addBranch()">
+        ✅ حفظ
+      </button>
+
+      <button class="btn" onclick="closeAddBranch()">
+        إلغاء
+      </button>
+    </div>
+  </div>
+</div>
   </div>
 
   <!-- ===== REPORTS VIEW ===== -->
@@ -261,7 +283,59 @@ function clearReports(id){ LS.del('ibs_reports_'+id); }
 function norm(v){ return (v===undefined||v===null) ? '' : String(v).trim(); }
 function toNum(v){ const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 function fmtDate(ts){ if(!ts) return '—'; const d = new Date(ts); return d.toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' + d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}); }
+function openAddBranch() {
+  const modal = document.getElementById('addBranchModal');
+  const input = document.getElementById('newBranchName');
 
+  if (!modal) {
+    console.error('❌ addBranchModal غير موجود');
+    return;
+  }
+
+  modal.classList.remove('hidden');
+
+  if (input) {
+    input.value = '';
+    setTimeout(() => input.focus(), 100);
+  }
+}
+
+function closeAddBranch() {
+  const modal = document.getElementById('addBranchModal');
+
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+function addBranch() {
+  const input = document.getElementById('newBranchName');
+  const name = input ? input.value.trim() : '';
+
+  if (!name) {
+    alert('اكتب اسم الفرع');
+    return;
+  }
+
+  firebase.database().ref('branches').push({
+    name: name,
+    createdAt: firebase.database.ServerValue.TIMESTAMP
+  })
+  .then(() => {
+    console.log('✅ تم إضافة الفرع:', name);
+
+    closeAddBranch();
+
+    if (typeof renderBranches === 'function') {
+      renderBranches();
+    }
+  })
+  .catch(err => {
+    console.error('❌ خطأ في إضافة الفرع:', err);
+    alert('حدث خطأ أثناء إضافة الفرع');
+  });
+}
+  
 /* ===================== EXPIRE OLD REPORTS ===================== */
 function expireOldReports(){
   getBranches().forEach(b=>{
