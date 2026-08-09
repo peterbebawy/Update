@@ -271,7 +271,7 @@
     <div class="toolbar">
       <div>
         <h2>أصناف غير متوفرة على الأبليكيشن</h2>
-        <div class="hint">ارفع كتالوج طويل الأمد لكل أبليكيشن (Instashop / Vezeeta / Talabat) لكل فرع — A كود الصنف · B Related to · C اسم الصنف · D كمية الصنف · E السعر. النظام يقارن كود كل صنف بالليستة اليومية (كود الصنف أو Related to) مع استبعاد أصناف النواقص، ويطلعلك أى صنف من الكتالوج مش متوفر فعليًا.</div>
+        <div class="hint">لكل فرع ولكل أبليكيشن (Instashop / Vezeeta / Talabat) ارفع شيتين: <b>1) الشيت الأصلى</b> (A كود الصنف · B Related to · C اسم الصنف · D كمية الصنف · E السعر) وهو الرصيد الحقيقى للفرع — وأى كود موجود فى ليستة النواقص ومش موجود فيه بيتضاف تلقائيًا. <b>2) شيت المتوفر فعليًا على الأبليكيشن الآن</b> (عمود A = كود الصنف فقط). النظام بيقارن الاتنين ويطلعلك أى كود من الرصيد الحقيقى مش موجود فعليًا على الأبليكيشن.</div>
       </div>
       <button class="btn btn-accent" onclick="generateUnavailableForAllBranches()">🔄 قارن كل الفروع دفعة واحدة</button>
     </div>
@@ -353,7 +353,7 @@ const now = () => Date.now();
 const TWO_DAYS = 1000*60*60*24*2;
 
 /* نسخة محلية (كاش) من بيانات فايربيز، تتحدث تلقائيًا لحظة أي تغيير عن طريق on('value') */
-let cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {}, catalogs: {}, unavailableReports: {} };
+let cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {}, catalogs: {}, appAvailable: {}, unavailableReports: {} };
 let dataListenerAttached = false;
 
 function normalizeCache(v){
@@ -366,6 +366,7 @@ function normalizeCache(v){
     instashopReports: val.instashopReports || {},
     settings: val.settings || {},
     catalogs: val.catalogs || {},
+    appAvailable: val.appAvailable || {},
     unavailableReports: val.unavailableReports || {}
   };
 }
@@ -434,7 +435,7 @@ function watchConnectionState(){
 function detachDataListener(){
   if(!dataListenerAttached) return;
   dataListenerAttached = false;
-  firebase.database().ref('app_data').off();
+  cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {}, catalogs: {}, appAvailable: {}, unavailableReports: {} };
   cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {}, catalogs: {}, unavailableReports: {} };
   clearTimeout(firstLoadTimeoutTimer);
   firstDataReceived = false;
@@ -508,6 +509,13 @@ function clearInstashopReport(id){ delete cache.instashopReports[id]; firebaseRe
 
 function norm(v){ return (v===undefined||v===null) ? '' : String(v).trim(); }
 function toNum(v){ const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+/* يحوّل كود الصنف لرقم فعلى (Number) لو الكود أرقام فقط، عشان يتخزن فى الإكسل كـ Number مش نص
+   (لو الكود فيه حروف أو رموز بيسيبه نص زي ما هو عشان متتلخبطش القيمة) */
+function codeToNumber(code){
+  const s = norm(code);
+  if(s !== '' && /^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+  return s;
+}
 function fmtDate(ts){ if(!ts) return '—'; const d = new Date(ts); return d.toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' + d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}); }
 /* ===================== EXPIRE OLD REPORTS ===================== */
 function expireOldReports(){
@@ -1277,8 +1285,10 @@ const TALABAT_CODE_MAP = {
   'dar elyosr': 'dar elyosr_761230',
   'watanya': 'watanya_764155',
   'j. tito': 'j. tito_761461',
-  'awl galam': 'Awl gamal_1111859',
-  'midtown': 'midtown_761462',
+  'awl gamal': 'awl gamal_1111859',
+  'awl galam': 'awl gamal_1111859', /* تحسبًا لاختلاف كتابة الاسم */
+  'midtwon': 'midtown_761462',
+  'midtown': 'midtown_761462', /* تحسبًا لاختلاف كتابة الاسم */
   'abaasya': 'Abaasya_796706'
 };
 function talabatFileName(branchId){
@@ -1319,9 +1329,10 @@ function buildVezeetaFile(branchId){
   const r = getReports(branchId);
   if(!r) return null;
   const aoa = [['كود الصنف','إسم الصنف','سعر البيع','الرصيد']];
-  r.items.forEach(it => aoa.push([it.code, it.name, it.price, it.balance]));
+  r.items.forEach(it => aoa.push([codeToNumber(it.code), it.name, it.price, it.balance]));
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{wch:14},{wch:34},{wch:12},{wch:10}];
+  ws['!autofilter'] = { ref: 'A1:D'+aoa.length }; /* تنسيق A:D كـ Table مع فلتر فى الهيدر */
   const wb = XLSX.utils.book_new();
   const name = branchSheetFileName(branchId);
   XLSX.utils.book_append_sheet(wb, ws, safeSheetName(name));
@@ -1735,11 +1746,14 @@ const APP_LABELS = {instashop:'Instashop', vezeeta:'Vezeeta', talabat:'Talabat'}
 function getCatalog(branchId, app){
   return (cache.catalogs && cache.catalogs[branchId] && cache.catalogs[branchId][app]) || null;
 }
+function getAppAvailable(branchId, app){
+  return (cache.appAvailable && cache.appAvailable[branchId] && cache.appAvailable[branchId][app]) || null;
+}
 function getUnavailableReport(branchId, app){
   return (cache.unavailableReports && cache.unavailableReports[branchId] && cache.unavailableReports[branchId][app]) || null;
 }
 
-/* رفع كتالوج طويل الأمد لأبليكيشن معين لفرع معين: A كود الصنف، B Related to، C اسم الصنف، D كمية الصنف، E السعر */
+/* رفع الشيت الأصلى (الكتالوج الحقيقى) لأبليكيشن معين لفرع معين: A كود الصنف، B Related to، C اسم الصنف، D كمية الصنف، E السعر */
 async function handleCatalogUpload(branchId, app, input){
   const file = input.files[0];
   if(!file) return;
@@ -1761,7 +1775,7 @@ async function handleCatalogUpload(branchId, app, input){
     cache.catalogs[branchId] = cache.catalogs[branchId] || {};
     cache.catalogs[branchId][app] = data;
     firebaseWrite('app_data/catalogs/'+branchId+'/'+app, data);
-    toast('تم رفع كتالوج '+APP_LABELS[app]+': '+items.length+' صنف');
+    toast('تم رفع الشيت الأصلى لـ '+APP_LABELS[app]+': '+items.length+' صنف');
     renderUnavailableList(branchId);
   }catch(err){
     console.error(err);
@@ -1771,71 +1785,108 @@ async function handleCatalogUpload(branchId, app, input){
 }
 
 function clearCatalog(branchId, app){
-  if(!confirm('هل تريد حذف كتالوج '+APP_LABELS[app]+' لهذا الفرع؟')) return;
+  if(!confirm('هل تريد حذف الشيت الأصلى لـ '+APP_LABELS[app]+' لهذا الفرع؟')) return;
   if(cache.catalogs[branchId]) delete cache.catalogs[branchId][app];
   firebaseRemove('app_data/catalogs/'+branchId+'/'+app);
   if(cache.unavailableReports[branchId]) delete cache.unavailableReports[branchId][app];
   firebaseRemove('app_data/unavailableReports/'+branchId+'/'+app);
-  toast('تم حذف الكتالوج');
+  toast('تم حذف الشيت الأصلى');
   renderUnavailableList(branchId);
 }
 
-/* مجموعة الأكواد "المتوفرة فعليًا" لفرع/أبليكيشن معين: كود الصنف أو Related to (كولوم L) من الليستة
-   اليومية، بشرط الرصيد >= 1 واستبعاد أى كود موجود فى ليستة النواقص — نفس منطق الريبورتات الحالية
-   بالظبط (مع استثناء الألبان فى Instashop) عشان تكون النتيجة متسقة مع الريبورتات المُصدَّرة فعلاً */
-function computeAvailableSet(branchId, app){
-  const main = getMain(branchId);
-  if(!main || !main.items.length) return null;
-  const shortage = getShortage(branchId);
-  const shortSet = new Set(shortage.items.map(s=>s.code).filter(Boolean));
-  const set = new Set();
-  main.items.forEach(it=>{
-    let available;
-    if(app === 'instashop'){
-      const milk = isMilkCategory(it.category);
-      if(milk){
-        available = true; // أصناف الألبان تعتبر متوفرة دائمًا فى Instashop، بغض النظر عن النواقص أو الرصيد
-      } else if(shortSet.has(it.code)){
-        available = false;
-      } else {
-        available = it.qty >= 1;
-      }
-    } else {
-      if(shortSet.has(it.code)) available = false;
-      else available = it.qty >= 1;
-    }
-    if(available){
-      if(it.code) set.add(it.code);
-      if(it.relatedTo) set.add(it.relatedTo);
-    }
-  });
-  return set;
+/* رفع شيت "المتوفر فعليًا على الأبليكيشن الآن" لفرع/أبليكيشن معين — عمود A فقط = كود الصنف
+   (أى أعمدة تانية فى الشيت بيتم تجاهلها، زى منطق رفع ليستة النواقص بالظبط) */
+async function handleAppAvailableUpload(branchId, app, input){
+  const file = input.files[0];
+  if(!file) return;
+  const headerEl = document.getElementById('availHeader-'+app+'-'+branchId);
+  const hasHeader = headerEl ? headerEl.checked : true;
+  try{
+    const rows = await readWorkbookRows(file);
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    const items = dataRows
+      .filter(r => norm(r[0]) !== '')
+      .map(r => ({ code: norm(r[0]) }));
+    const data = {uploadedAt: now(), fileName: file.name, items};
+    cache.appAvailable[branchId] = cache.appAvailable[branchId] || {};
+    cache.appAvailable[branchId][app] = data;
+    firebaseWrite('app_data/appAvailable/'+branchId+'/'+app, data);
+    toast('تم رفع شيت المتوفر فعليًا على '+APP_LABELS[app]+': '+items.length+' صنف');
+    renderUnavailableList(branchId);
+  }catch(err){
+    console.error(err);
+    toast('حدث خطأ أثناء قراءة الملف');
+  }
+  input.value='';
 }
 
-/* يقارن كتالوج أبليكيشن معين لفرع معين بالمتوفر فعليًا، ويحفظ ريبورت "غير متوفر" */
-function generateUnavailableReportCore(branchId, app, updates){
+function clearAppAvailable(branchId, app){
+  if(!confirm('هل تريد حذف شيت المتوفر فعليًا على '+APP_LABELS[app]+' لهذا الفرع؟')) return;
+  if(cache.appAvailable[branchId]) delete cache.appAvailable[branchId][app];
+  firebaseRemove('app_data/appAvailable/'+branchId+'/'+app);
+  if(cache.unavailableReports[branchId]) delete cache.unavailableReports[branchId][app];
+  firebaseRemove('app_data/unavailableReports/'+branchId+'/'+app);
+  toast('تم حذف شيت المتوفر فعليًا');
+  renderUnavailableList(branchId);
+}
+
+/* المرجع الحقيقى (رصيد الفرع الفعلى) = الشيت الأصلى + أى كود فى ليستة النواقص مش موجود بالفعل
+   فى الشيت الأصلى (بيتضاف تلقائيًا، والاسم/الكمية/السعر بتتجاب من الليستة اليومية لو موجود الكود بيها) */
+function buildReferenceItems(branchId, app){
   const catalog = getCatalog(branchId, app);
   if(!catalog || !catalog.items.length) return null;
-  const availSet = computeAvailableSet(branchId, app);
-  if(!availSet) return null; // لا توجد ليستة يومية لهذا الفرع بعد
 
-  const unavailable = catalog.items.filter(it => it.code && !availSet.has(it.code));
-  const data = {generatedAt: now(), items: unavailable, totalCatalog: catalog.items.length};
+  const shortage = getShortage(branchId);
+  const main = getMain(branchId);
+  const mainByCode = main ? new Map(main.items.map(m=>[m.code, m])) : null;
+
+  const map = new Map();
+  catalog.items.forEach(it=>{
+    if(it.code && !map.has(it.code)) map.set(it.code, it);
+  });
+  shortage.items.forEach(s=>{
+    const code = norm(s.code);
+    if(!code || map.has(code)) return;
+    const found = mainByCode ? mainByCode.get(code) : null;
+    map.set(code, {
+      code,
+      relatedTo: found ? found.relatedTo : '',
+      name: found ? found.name : '',
+      qty: found ? found.qty : 0,
+      price: found ? found.price : 0
+    });
+  });
+  return Array.from(map.values());
+}
+
+/* يقارن المرجع الحقيقى (الشيت الأصلى + النواقص) بشيت "المتوفر فعليًا على الأبليكيشن"،
+   ويحفظ ريبورت بكل كود موجود فى المرجع لكن مش موجود فى شيت المتوفر فعليًا */
+function generateUnavailableReportCore(branchId, app, updates){
+  const referenceItems = buildReferenceItems(branchId, app);
+  if(!referenceItems || !referenceItems.length) return null;
+
+  const appAvail = getAppAvailable(branchId, app);
+  if(!appAvail || !appAvail.items.length) return null;
+
+  const availSet = new Set(appAvail.items.map(i=>i.code).filter(Boolean));
+  const unavailable = referenceItems.filter(it => it.code && !availSet.has(it.code));
+  const data = {generatedAt: now(), items: unavailable, totalCatalog: referenceItems.length};
   cache.unavailableReports[branchId] = cache.unavailableReports[branchId] || {};
   cache.unavailableReports[branchId][app] = data;
   const path = 'app_data/unavailableReports/'+branchId+'/'+app;
   if(updates){ updates[path] = data; } else { firebaseWrite(path, data); }
-  return {count: unavailable.length, total: catalog.items.length};
+  return {count: unavailable.length, total: referenceItems.length};
 }
 
 function generateUnavailableForBranch(branchId){
   const updates = {};
   let done = 0;
   APP_LIST.forEach(app=>{
+
     const res = generateUnavailableReportCore(branchId, app, updates);
     if(res) done++;
   });
-  if(!done){ toast('ارفع كتالوج واحد على الأقل، مع رفع الليستة اليومية لهذا الفرع أولاً'); return; }
+  if(!done){ toast('ارفع الشيت الأصلى وشيت المتوفر فعليًا لأبليكيشن واحد على الأقل لهذا الفرع'); return; }
   firebaseBatchWrite(updates);
   renderUnavailableList(branchId);
   toast('تم مقارنة '+done+' أبليكيشن لهذا الفرع');
@@ -1853,7 +1904,7 @@ function generateUnavailableForAllBranches(){
     });
     if(doneApp) doneBranches++;
   });
-  if(!doneBranches){ toast('لا توجد كتالوجات مرفوعة لأى فرع بعد'); return; }
+  if(!doneBranches){ toast('لا توجد شيتات كاملة (أصلى + متوفر فعليًا) مرفوعة لأى فرع بعد'); return; }
   firebaseBatchWrite(updates);
   renderUnavailableList();
   toast('تم تحديث الريبورتات لـ '+doneBranches+' فرع');
@@ -1995,7 +2046,7 @@ function toggleUnavailableBranch(id){
 }
 
 function renderUnavailableBranchBody(b){
-  const boxes = APP_LIST.map(app => renderCatalogBox(b, app)).join('');
+  const boxes = APP_LIST.map(app => renderAppBox(b, app)).join('');
   return `
       <div class="grid3">${boxes}</div>
       <div style="margin-top:14px">
@@ -2004,8 +2055,9 @@ function renderUnavailableBranchBody(b){
   `;
 }
 
-function renderCatalogBox(b, app){
+function renderAppBox(b, app){
   const catalog = getCatalog(b.id, app);
+  const appAvail = getAppAvailable(b.id, app);
   const report = getUnavailableReport(b.id, app);
   const rows = report ? report.items.map(it => `
     <tr>
@@ -2019,13 +2071,21 @@ function renderCatalogBox(b, app){
   return `
     <div class="box">
       <h4>${APP_LABELS[app]}</h4>
-      <div class="sub">كتالوج ${APP_LABELS[app]} الطويل لهذا الفرع — A كود الصنف · B Related to · C اسم الصنف · D كمية الصنف · E السعر</div>
+
+      <div class="sub" style="margin-bottom:4px"><b>1) الشيت الأصلى (الرصيد الحقيقى)</b> — A كود الصنف · B Related to · C اسم الصنف · D كمية الصنف · E السعر. أى كود فى ليستة النواقص مش موجود هنا بيتضاف تلقائيًا.</div>
       <div class="row-check"><input type="checkbox" id="catHeader-${app}-${b.id}" checked> <label for="catHeader-${app}-${b.id}">الصف الأول عناوين</label></div>
       <input type="file" accept=".xlsx,.xls,.csv" onchange="handleCatalogUpload('${b.id}','${app}', this)">
-      <div class="status">${catalog ? `📄 ${escHtml(catalog.fileName || 'ملف')}<br>آخر رفع: ${fmtDate(catalog.uploadedAt)} — ${catalog.items.length} صنف` : 'لم يتم رفع كتالوج بعد'}</div>
-      ${catalog ? `<button class="btn btn-danger btn-sm" style="width:100%; margin-top:6px" onclick="clearCatalog('${b.id}','${app}')">🗑 حذف الكتالوج</button>` : ''}
+      <div class="status">${catalog ? `📄 ${escHtml(catalog.fileName || 'ملف')}<br>آخر رفع: ${fmtDate(catalog.uploadedAt)} — ${catalog.items.length} صنف` : 'لم يتم رفع الشيت الأصلى بعد'}</div>
+      ${catalog ? `<button class="btn btn-danger btn-sm" style="width:100%; margin-top:6px" onclick="clearCatalog('${b.id}','${app}')">🗑 حذف الشيت الأصلى</button>` : ''}
+
+      <div class="sub" style="margin:14px 0 4px; border-top:1px solid var(--line); padding-top:12px"><b>2) المتوفر فعليًا على ${APP_LABELS[app]} الآن</b> — عمود A فقط = كود الصنف (باقى الأعمدة بيتم تجاهلها لو موجودة)</div>
+      <div class="row-check"><input type="checkbox" id="availHeader-${app}-${b.id}" checked> <label for="availHeader-${app}-${b.id}">الصف الأول عناوين</label></div>
+      <input type="file" accept=".xlsx,.xls,.csv" onchange="handleAppAvailableUpload('${b.id}','${app}', this)">
+      <div class="status">${appAvail ? `📄 ${escHtml(appAvail.fileName || 'ملف')}<br>آخر رفع: ${fmtDate(appAvail.uploadedAt)} — ${appAvail.items.length} صنف` : 'لم يتم رفع شيت المتوفر فعليًا بعد'}</div>
+      ${appAvail ? `<button class="btn btn-danger btn-sm" style="width:100%; margin-top:6px" onclick="clearAppAvailable('${b.id}','${app}')">🗑 حذف شيت المتوفر فعليًا</button>` : ''}
+
       ${report ? `
-        <div class="status" style="margin-top:10px">تم الإنشاء: ${fmtDate(report.generatedAt)}<br>غير متوفر: <b>${report.items.length}</b> من إجمالى <b>${report.totalCatalog}</b> صنف</div>
+        <div class="status" style="margin-top:12px; border-top:1px solid var(--line); padding-top:10px">تم الإنشاء: ${fmtDate(report.generatedAt)}<br>غير متوفر: <b>${report.items.length}</b> من إجمالى <b>${report.totalCatalog}</b> صنف (الرصيد الحقيقى)</div>
         <button class="btn btn-ghost btn-sm" style="width:100%; margin-top:6px" onclick="downloadUnavailable('${b.id}','${app}')">⬇ Export sheet</button>
         <div class="table-wrap" style="max-height:220px; margin-top:8px">
           <table class="rep-table">
