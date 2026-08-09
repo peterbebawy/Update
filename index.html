@@ -627,7 +627,16 @@ function confirmChangePassword(){
 /* ===================== TOGGLE BRANCH BODY ===================== */
 function toggleBranch(id){
   const el = document.getElementById('body-'+id);
+  if(!el) return;
+  const opening = !el.classList.contains('open');
   el.classList.toggle('open');
+  if(opening && el.dataset.rendered !== '1'){
+    const b = getBranches().find(x=>x.id===id);
+    if(b){
+      el.innerHTML = renderBranchBody(b);
+      el.dataset.rendered = '1';
+    }
+  }
 }
 
 /* ===================== PARSE EXCEL ===================== */
@@ -1473,16 +1482,10 @@ function renderBranches(keepOpenId){
     list.innerHTML = '<div class="empty"><b>لا يوجد فروع بعد</b>ابدأ بإضافة فرع من الزر أعلى الصفحة</div>';
     return;
   }
-  list.innerHTML = branches.map(b => renderBranchCard(b)).join('');
-  branches.forEach(b=>{
-    if(b.id === keepOpenId){
-      const body = document.getElementById('body-'+b.id);
-      if(body) body.classList.add('open');
-    }
-  });
+  list.innerHTML = branches.map(b => renderBranchCard(b, b.id === keepOpenId)).join('');
 }
 
-function renderBranchCard(b){
+function renderBranchCard(b, isOpen){
   const main = getMain(b.id);
   const shortage = getShortage(b.id);
   const reports = getReports(b.id);
@@ -1493,9 +1496,41 @@ function renderBranchCard(b){
   const repBadge = reports ? `<span class="badge badge-warn">تُحذف ${fmtDate(reports.generatedAt + 1000*60*60*24*2)}</span>` : `<span class="badge badge-off">لا يوجد ريبورت</span>`;
   const instashopBadge = instashop ? `<span class="badge badge-warn">تُحذف ${fmtDate(instashop.generatedAt + 1000*60*60*24*2)}</span>` : `<span class="badge badge-off">لا يوجد ريبورت</span>`;
 
+  /* محتوى تفاصيل الفرع (الجداول التقيلة) بيتبني بس لو الكارت مفتوح فعلاً — الفروع المقفولة
+     بتاخد div فاضي، وبيتبني محتواها أول ما المستخدم يفتحها (lazy render) — ده بيقلل شغل
+     المتصفح جدًا خصوصًا مع عدد فروع/أصناف كبير */
+  const bodyContent = isOpen ? renderBranchBody(b) : '';
+
+  return `
+  <div class="branch-card">
+    <div class="branch-head" onclick="toggleBranch('${b.id}')">
+      <div class="name"><span class="dot"></span><h3>${escHtml(b.name)}</h3></div>
+      <div class="branch-meta">
+        <span>الليستة اليومية ${mainBadge}</span>
+        <span>النواقص ${shortBadge}</span>
+        <span>Vezeeta ${repBadge}</span>
+        <span>Instashop ${instashopBadge}</span>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteBranch('${b.id}')">حذف الفرع</button>
+    </div>
+    <div class="branch-body${isOpen ? ' open' : ''}" id="body-${b.id}" data-rendered="${isOpen ? '1' : '0'}">${bodyContent}</div>
+  </div>`;
+}
+
+/* يبني محتوى تفاصيل الفرع (الجداول) لوحده — بيتنادى إما فورًا لو الفرع مفتوح وقت renderBranches،
+   أو لاحقًا لحظة ما المستخدم يفتح فرع كان مقفول (lazy) */
+function renderBranchBody(b){
+  const main = getMain(b.id);
+  const shortage = getShortage(b.id);
+  const reports = getReports(b.id);
+  const instashop = getInstashopReport(b.id);
+
+  /* خريطة كود->صنف تتبني مرة واحدة بس هنا، بدل ما نعمل .find() بطيء لكل صنف نواقص لوحده */
+  const mainByCode = main ? new Map(main.items.map(m=>[m.code, m])) : null;
+
   const shortRows = shortage.items.map((it, idx) => {
     const preview = codePreviewHtml(main, it.code);
-    const foundItem = main && main.items.find(m => m.code === it.code);
+    const foundItem = mainByCode ? mainByCode.get(it.code) : null;
     const resolvedName = foundItem ? foundItem.name : '';
     return `
     <tr data-code="${escAttr((it.code||'').toLowerCase())}" data-name="${escAttr((resolvedName||'').toLowerCase())}">
@@ -1512,7 +1547,7 @@ function renderBranchCard(b){
     .map(it => it.code)
     .filter(Boolean)
     .filter(code => {
-      const found = main && main.items.find(m => m.code === code);
+      const found = mainByCode ? mainByCode.get(code) : null;
       return !found || found.qty <= 0;
     });
 
@@ -1533,18 +1568,6 @@ function renderBranchCard(b){
   ).join('') : '';
 
   return `
-  <div class="branch-card">
-    <div class="branch-head" onclick="toggleBranch('${b.id}')">
-      <div class="name"><span class="dot"></span><h3>${escHtml(b.name)}</h3></div>
-      <div class="branch-meta">
-        <span>الليستة اليومية ${mainBadge}</span>
-        <span>النواقص ${shortBadge}</span>
-        <span>Vezeeta ${repBadge}</span>
-        <span>Instashop ${instashopBadge}</span>
-      </div>
-      <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteBranch('${b.id}')">حذف الفرع</button>
-    </div>
-    <div class="branch-body" id="body-${b.id}">
       <div class="grid3">
 
         <div class="box">
@@ -1610,8 +1633,7 @@ function renderBranchCard(b){
         </div>
 
       </div>
-    </div>
-  </div>`;
+  `;
 }
 
 /* ===================== SEARCH CHAIN (بحث شامل فى كل الفروع) ===================== */
