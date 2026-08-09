@@ -293,28 +293,60 @@ function showLogin(){
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('appRoot').style.display = 'none';
 }
-
-function doLogin(){
+function doLogin() {
   const email = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
+
   errEl.textContent = '';
-  if(!email || !password){ errEl.textContent = 'من فضلك أدخل البريد الإلكتروني وكلمة المرور'; return; }
-  firebase.auth().signInWithEmailAndPassword(email, password)
-    .catch(err=>{
-      console.error(err);
-      if(err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found'){
-        errEl.textContent = 'البريد الإلكتروني أو كلمة المرور غير صحيحة';
-      } else if(err.code === 'auth/invalid-email'){
-        errEl.textContent = 'صيغة البريد الإلكتروني غير صحيحة';
-      } else if(err.code === 'auth/too-many-requests'){
-        errEl.textContent = 'محاولات كثيرة جدًا، حاول بعد قليل';
-      } else {
-        errEl.textContent = 'تعذر تسجيل الدخول، تأكد من إعدادات Firebase (راجع firebase-config.js)';
+
+  if (!email || !password) {
+    errEl.textContent = 'من فضلك أدخل اسم المستخدم وكلمة المرور';
+    return;
+  }
+
+  firebase.database().ref('users').once('value')
+    .then(snapshot => {
+
+      const users = snapshot.val() || {};
+
+      const found = Object.entries(users).find(([id, user]) =>
+        user &&
+        user.name &&
+        user.pass &&
+        user.name.toLowerCase() === email.toLowerCase() &&
+        String(user.pass) === String(password)
+      );
+
+      if (!found) {
+        errEl.textContent = 'اسم المستخدم أو كلمة المرور غير صحيحة';
+        return;
       }
+
+      const [userId, userData] = found;
+
+      currentUser = {
+        id: userId,
+        ...userData
+      };
+
+      console.log('✅ تم تسجيل الدخول:', currentUser);
+
+      // إخفاء شاشة تسجيل الدخول
+      document.getElementById('loginScreen').classList.add('hidden');
+
+      // إظهار التطبيق
+      document.getElementById('appScreen').classList.remove('hidden');
+
+      // تشغيل التطبيق
+      initApp();
+
+    })
+    .catch(err => {
+      console.error('❌ Login error:', err);
+      errEl.textContent = 'حدث خطأ أثناء الاتصال بقاعدة البيانات';
     });
 }
-
 function doLogout(){
   if(!confirm('هل تريد تسجيل الخروج؟')) return;
   firebase.auth().signOut();
