@@ -252,7 +252,7 @@
         <div class="hint">ابحث بالكود أو الاسم لمعرفة الصنف متوفر فى أنهى ليستة يومية، وأنهى ليستة نواقص، وأنهى ريبورت بعد حذف النواقص — فى كل الفروع دفعة واحدة</div>
       </div>
     </div>
-    <input class="code-search" id="chainSearchInput" placeholder="ابحث بالكود أو الاسم..." style="max-width:420px" oninput="runSearchChain(this.value)">
+    <input class="code-search" id="chainSearchInput" placeholder="ابحث بالكود أو الاسم..." style="max-width:420px" oninput="runSearchChainDebounced(this.value)">
     <div id="chain-results" style="margin-top:18px">
       <div class="empty"><b>ابدأ الكتابة للبحث</b>اكتب كود أو اسم الصنف لعرض تواجده فى كل الفروع</div>
     </div>
@@ -1629,6 +1629,15 @@ function renderChainSection(title, headers, hits, rowFn, emptyMsg){
   </div>`;
 }
 
+/* تأخير بسيط عشان البحث ميتنفذش مع كل حرف أثناء الكتابة السريعة، لكن يستنى لحظة توقف بسيطة */
+function debounce(fn, delay){
+  let t;
+  return function(...args){
+    clearTimeout(t);
+    t = setTimeout(()=>fn.apply(this, args), delay);
+  };
+}
+
 function runSearchChain(value){
   const el = document.getElementById('chain-results');
   if(!el) return;
@@ -1656,8 +1665,9 @@ function runSearchChain(value){
     }
 
     if(shortage && shortage.items.length){
+      const mainByCode = main ? new Map(main.items.map(m=>[m.code, m])) : null;
       shortage.items.forEach(it=>{
-        const foundMain = main && main.items.find(m=>m.code===it.code);
+        const foundMain = mainByCode ? mainByCode.get(it.code) : null;
         const resolvedName = foundMain ? (foundMain.name||'') : '';
         if((it.code||'').toLowerCase().includes(q) || resolvedName.toLowerCase().includes(q)){
           shortageHits.push({branch:b.name, code:it.code, name:resolvedName});
@@ -1712,6 +1722,8 @@ function runSearchChain(value){
       'الصنف غير موجود فى أي ريبورت انستاشوب (لم يُنشأ ريبورت، أو تم حذفه ضمن النواقص)'
     );
 }
+/* نسخة مؤجَّلة تُستخدم فى خانة البحث، عشان البحث ميتنفذش مع كل حرف أثناء الكتابة السريعة */
+const runSearchChainDebounced = debounce(runSearchChain, 250);
 
 /* ===================== ESCAPE HELPERS ===================== */
 function escHtml(s){ return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
