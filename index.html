@@ -294,13 +294,13 @@ function showLogin(){
   document.getElementById('appRoot').style.display = 'none';
 }
 function doLogin() {
-  const email = document.getElementById('loginEmail').value.trim();
+  const username = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
 
   errEl.textContent = '';
 
-  if (!email || !password) {
+  if (!username || !password) {
     errEl.textContent = 'من فضلك أدخل اسم المستخدم وكلمة المرور';
     return;
   }
@@ -314,7 +314,7 @@ function doLogin() {
         user &&
         user.name &&
         user.pass &&
-        user.name.toLowerCase() === email.toLowerCase() &&
+        user.name.toLowerCase() === username.toLowerCase() &&
         String(user.pass) === String(password)
       );
 
@@ -333,10 +333,10 @@ function doLogin() {
       console.log('✅ تم تسجيل الدخول:', currentUser);
 
       // إخفاء شاشة تسجيل الدخول
-      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('loginScreen').style.display = 'none';
 
       // إظهار التطبيق
-      document.getElementById('appScreen').classList.remove('hidden');
+      document.getElementById('appRoot').style.display = 'block';
 
       // تشغيل التطبيق
       initApp();
