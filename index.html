@@ -606,7 +606,7 @@ function codePreviewHtml(main, code){
   return {html: '✓ ' + escHtml(found.name || '(بدون اسم)') + ' — رصيد: ' + found.qty, cls:'ok'};
 }
 
-/* معاينة حية لاسم الصنف أثناء كتابة الكود فى ليستة النواقص */
+/* معاينة حية لاسم الصنف أثناء كتابة الكود فى ليستة النواقص، وتحديث بيانات البحث لحظيًا */
 function previewShortageCode(branchId, idx, value){
   const el = document.getElementById('short-preview-'+branchId+'-'+idx);
   if(!el) return;
@@ -615,6 +615,15 @@ function previewShortageCode(branchId, idx, value){
   el.textContent = '';
   el.innerHTML = p.html;
   el.className = 'mini-preview ' + p.cls;
+
+  // تحديث خصائص البحث على الصف نفسه أولًا بأول، بحيث تظهر الأصناف المضافة/المعدّلة يدويًا فى البحث فورًا
+  const row = el.closest('tr');
+  if(row){
+    const c = norm(value);
+    const found = main && main.items.find(m => m.code === c);
+    row.dataset.code = c.toLowerCase();
+    row.dataset.name = (found ? (found.name||'') : '').toLowerCase();
+  }
 }
 
 /* بحث بالكود أو الاسم داخل الليستة اليومية للفرع */
@@ -652,19 +661,26 @@ function filterShortageTable(branchId, value){
 }
 
 
-/* بحث بالكود أو الاسم داخل جدول الريبورت الناتج (فلترة الصفوف المعروضة) */
-function filterReportTable(branchId, value){
+/* بحث بالكود أو الاسم داخل جدول الريبورت الناتج (فلترة الصفوف المعروضة) — تُستخدم فى تاب الريبورتات وداخل كارت الفرع */
+function filterReportRows(tableId, countId, value){
   const q = norm(value).toLowerCase();
+  const rows = document.querySelectorAll('#'+tableId+' tbody tr');
   let visible = 0;
-  document.querySelectorAll('#rep-table-'+branchId+' tbody tr').forEach(tr=>{
+  rows.forEach(tr=>{
     const code = (tr.dataset.code||'');
     const name = (tr.dataset.name||'');
     const match = !q || code.includes(q) || name.includes(q);
     tr.style.display = match ? '' : 'none';
     if(match) visible++;
   });
-  const countEl = document.getElementById('rep-count-'+branchId);
-  if(countEl) countEl.textContent = q ? (visible+' صنف مطابق من إجمالي '+document.querySelectorAll('#rep-table-'+branchId+' tbody tr').length) : (document.querySelectorAll('#rep-table-'+branchId+' tbody tr').length+' صنف');
+  const countEl = document.getElementById(countId);
+  if(countEl) countEl.textContent = q ? (visible+' صنف مطابق من إجمالي '+rows.length) : (rows.length+' صنف');
+}
+function filterReportTable(branchId, value){
+  filterReportRows('rep-table-'+branchId, 'rep-count-'+branchId, value);
+}
+function filterBranchReportTable(branchId, value){
+  filterReportRows('rep-table-branch-'+branchId, 'rep-count-branch-'+branchId, value);
 }
 
 /* ===================== GENERATE REPORTS ===================== */
@@ -814,6 +830,10 @@ function renderBranchCard(b){
       return !found || found.qty <= 0;
     });
 
+  const reportRows = reports ? reports.items.map(it=>
+    `<tr data-code="${escAttr((it.code||'').toLowerCase())}" data-name="${escAttr((it.name||'').toLowerCase())}"><td class="mono">${escHtml(it.code)}</td><td>${escHtml(it.name)}</td><td>${it.price}</td><td>${it.balance}</td></tr>`
+  ).join('') : '';
+
   return `
   <div class="branch-card">
     <div class="branch-head" onclick="toggleBranch('${b.id}')">
@@ -872,6 +892,14 @@ function renderBranchCard(b){
               <button class="btn btn-ghost btn-sm" onclick="downloadInstashop('${b.id}')">⬇ Instashop / Vezeeta</button>
               <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ Talabat (CSV)</button>
             </div>
+            <input class="code-search" style="margin-top:10px" placeholder="ابحث بالكود أو الاسم فى الريبورت..." oninput="filterBranchReportTable('${b.id}', this.value)">
+            <div class="table-wrap" style="max-height:200px">
+              <table class="rep-table" id="rep-table-branch-${b.id}">
+                <thead><tr><th>الكود</th><th>اسم الصنف</th><th>السعر</th><th>الرصيد</th></tr></thead>
+                <tbody>${reportRows}</tbody>
+              </table>
+            </div>
+            <div class="hint" id="rep-count-branch-${b.id}" style="padding:6px 2px 0">${reports.items.length} صنف</div>
             <div class="expiry-note">سيُحذف هذا الريبورت تلقائيًا في ${fmtDate(reports.generatedAt + 1000*60*60*24*2)}</div>
           ` : `<div class="status">لا يوجد ريبورت بعد</div>`}
         </div>
