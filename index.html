@@ -108,6 +108,11 @@
   .box{border:1px solid var(--line); border-radius:8px; padding:14px; background:#fdfcf9;}
   .box h4{margin:0 0 4px; font-size:13.5px; font-weight:800;}
   .box .sub{font-size:11.5px; color:var(--ink-soft); margin-bottom:10px; line-height:1.6;}
+  .mini-preview{font-size:11px; margin-top:3px; line-height:1.5;}
+  .mini-preview.ok{color:var(--accent);}
+  .mini-preview.warn{color:var(--amber);}
+  .code-search{width:100%; border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-family:'IBM Plex Mono',monospace; direction:ltr; text-align:right; font-size:12px; margin-top:8px;}
+  .code-search:focus{outline:none; border-color:var(--accent);}
   .box .status{font-size:12px; margin-bottom:10px;}
   .box input[type=file]{font-size:12px; width:100%; margin-bottom:8px;}
   .row-check{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-soft); margin-bottom:10px;}
@@ -484,6 +489,48 @@ function removeShortageRow(branchId, idx){
   renderBranches(branchId);
 }
 
+/* ===================== CODE PREVIEW / SEARCH ===================== */
+/* يبحث عن كود صنف في الليستة اليومية ويرجع HTML لعرض اسمه، لاستخدامه فى المعاينة والبحث */
+function codePreviewHtml(main, code){
+  const c = norm(code);
+  if(!c) return {html:'', cls:''};
+  const found = main && main.items.find(it => it.code === c);
+  if(found) return {html: '✓ ' + escHtml(found.name || '(بدون اسم)') + ' — رصيد: ' + found.qty, cls:'ok'};
+  return {html: '⚠ الكود غير موجود فى الليستة اليومية', cls:'warn'};
+}
+
+/* معاينة حية لاسم الصنف أثناء كتابة الكود فى ليستة النواقص */
+function previewShortageCode(branchId, idx, value){
+  const el = document.getElementById('short-preview-'+branchId+'-'+idx);
+  if(!el) return;
+  const main = getMain(branchId);
+  const p = codePreviewHtml(main, value);
+  el.textContent = '';
+  el.innerHTML = p.html;
+  el.className = 'mini-preview ' + p.cls;
+}
+
+/* بحث بالكود داخل الليستة اليومية للفرع */
+function searchMainCode(branchId, value){
+  const el = document.getElementById('main-search-result-'+branchId);
+  if(!el) return;
+  const q = norm(value).toLowerCase();
+  if(!q){ el.innerHTML = ''; return; }
+  const main = getMain(branchId);
+  if(!main || !main.items.length){
+    el.innerHTML = '<div class="mini-preview warn">لا توجد ليستة يومية مرفوعة لهذا الفرع</div>';
+    return;
+  }
+  const matches = main.items.filter(it => it.code.toLowerCase().includes(q)).slice(0, 8);
+  if(!matches.length){
+    el.innerHTML = '<div class="mini-preview warn">⚠ لا يوجد صنف بهذا الكود</div>';
+    return;
+  }
+  el.innerHTML = matches.map(it =>
+    `<div class="mini-preview ok mono">✓ ${escHtml(it.code)} — ${escHtml(it.name || '(بدون اسم)')} (رصيد: ${it.qty})</div>`
+  ).join('');
+}
+
 /* ===================== GENERATE REPORTS ===================== */
 function generateReports(branchId){
   const main = getMain(branchId);
@@ -542,16 +589,28 @@ function downloadInstashop(branchId){
   XLSX.writeFile(wb, name+'.xlsx');
 }
 
+/* يهرب أي قيمة لتناسب صيغة CSV (فواصل، اقتباسات، أسطر جديدة) */
+function csvEscape(v){
+  const s = String(v ?? '');
+  if(/[",\r\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+
 function downloadTalabat(branchId){
   const r = getReports(branchId);
   if(!r){ toast('أنشئ الريبورتات أولاً'); return; }
-  const aoa = [['sku','barcode','price','Active','','maximum_sales_quantity']];
-  r.items.forEach(it => aoa.push([it.code, '', it.price, it.balance, '', it.balance]));
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{wch:14},{wch:12},{wch:10},{wch:10},{wch:6},{wch:22}];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Talabat');
-  XLSX.writeFile(wb, talabatFileName(branchId)+'.xlsx');
+  const rows = [['sku','barcode','price','Active','','maximum_sales_quantity']];
+  r.items.forEach(it => rows.push([it.code, '', it.price, it.balance, '', it.balance]));
+  const csv = rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = talabatFileName(branchId) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /* ===================== RENDER BRANCHES ===================== */
@@ -580,11 +639,17 @@ function renderBranchCard(b){
   const shortBadge = shortage.items.length ? `<span class="badge badge-ok">${shortage.items.length} صنف ناقص</span>` : `<span class="badge badge-off">لا توجد نواقص</span>`;
   const repBadge = reports ? `<span class="badge badge-warn">تُحذف ${fmtDate(reports.generatedAt + 1000*60*60*24*2)}</span>` : `<span class="badge badge-off">لا يوجد ريبورت</span>`;
 
-  const shortRows = shortage.items.map((it, idx) => `
+  const shortRows = shortage.items.map((it, idx) => {
+    const preview = codePreviewHtml(main, it.code);
+    return `
     <tr>
-      <td><input class="cell-input mono" value="${escAttr(it.code)}" onchange="updateShortageCell('${b.id}',${idx},'code',this.value)"></td>
+      <td>
+        <input class="cell-input mono" value="${escAttr(it.code)}" oninput="previewShortageCode('${b.id}',${idx},this.value)" onchange="updateShortageCell('${b.id}',${idx},'code',this.value)">
+        <div class="mini-preview ${preview.cls}" id="short-preview-${b.id}-${idx}">${preview.html}</div>
+      </td>
       <td><span class="del-x" onclick="removeShortageRow('${b.id}',${idx})">×</span></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   return `
   <div class="branch-card">
@@ -606,6 +671,8 @@ function renderBranchCard(b){
           <div class="row-check"><input type="checkbox" id="mainHeader-${b.id}" checked> <label for="mainHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleMainUpload('${b.id}', this)">
           <div class="status">${main ? `آخر رفع: ${fmtDate(main.uploadedAt)} — ${main.items.length} صنف` : 'لم يتم رفع أي ليستة بعد'}</div>
+          <input class="code-search" placeholder="ابحث بالكود..." oninput="searchMainCode('${b.id}', this.value)">
+          <div id="main-search-result-${b.id}"></div>
         </div>
 
         <div class="box">
@@ -632,7 +699,7 @@ function renderBranchCard(b){
             <div class="status" style="margin-top:10px">تم الإنشاء: ${fmtDate(reports.generatedAt)}<br>تم حذف ${reports.matchedCount} صنف (ليستة النواقص)</div>
             <div class="reports-actions">
               <button class="btn btn-ghost btn-sm" onclick="downloadInstashop('${b.id}')">⬇ Instashop / Vezeeta</button>
-              <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ Talabat</button>
+              <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ Talabat (CSV)</button>
             </div>
             <div class="expiry-note">سيُحذف هذا الريبورت تلقائيًا في ${fmtDate(reports.generatedAt + 1000*60*60*24*2)}</div>
           ` : `<div class="status">لا يوجد ريبورت بعد</div>`}
@@ -668,7 +735,7 @@ function renderReports(){
       <div class="branch-body open">
         <div class="reports-actions" style="margin-top:0; margin-bottom:14px;">
           <button class="btn btn-accent btn-sm" onclick="downloadInstashop('${b.id}')">⬇ تحميل Instashop / Vezeeta</button>
-          <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ تحميل Talabat</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ تحميل Talabat (CSV)</button>
         </div>
         <div class="table-wrap">
           <table class="rep-table">
