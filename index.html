@@ -502,6 +502,34 @@ function removeShortageRow(branchId, idx){
   renderBranches(branchId);
 }
 
+/* تنقل بلوحة المفاتيح بين صفوف كود ليستة النواقص: Enter/سهم لأسفل للانتقال (أو إضافة صف جديد لو آخر صف)، سهم لأعلى للرجوع */
+function handleShortageKeydown(e, branchId, idx){
+  if(e.key === 'ArrowDown'){
+    e.preventDefault();
+    focusShortageRow(branchId, idx+1);
+  } else if(e.key === 'ArrowUp'){
+    e.preventDefault();
+    focusShortageRow(branchId, idx-1);
+  } else if(e.key === 'Enter'){
+    e.preventDefault();
+    const s = getShortage(branchId);
+    if(idx === s.items.length - 1){
+      addShortageRow(branchId);
+      setTimeout(()=>focusShortageRow(branchId, idx+1), 0);
+    } else {
+      focusShortageRow(branchId, idx+1);
+    }
+  }
+}
+function focusShortageRow(branchId, idx){
+  const table = document.getElementById('short-table-'+branchId);
+  if(!table) return;
+  const rows = table.querySelectorAll('tbody tr');
+  if(idx < 0 || idx >= rows.length) return;
+  const input = rows[idx].querySelector('.cell-input');
+  if(input){ input.focus(); input.select(); }
+}
+
 /* ===================== SHORTAGE: SELECT & DELETE ===================== */
 function toggleSelectAllShortage(branchId, checked){
   document.querySelectorAll('.short-check[data-branch="'+branchId+'"]').forEach(cb=>{ cb.checked = checked; });
@@ -771,7 +799,7 @@ function renderBranchCard(b){
     <tr data-code="${escAttr((it.code||'').toLowerCase())}" data-name="${escAttr((resolvedName||'').toLowerCase())}">
       <td style="width:6%"><input type="checkbox" class="short-check" data-branch="${b.id}" data-idx="${idx}"></td>
       <td>
-        <input class="cell-input mono" value="${escAttr(it.code)}" oninput="previewShortageCode('${b.id}',${idx},this.value)" onchange="updateShortageCell('${b.id}',${idx},'code',this.value)">
+        <input class="cell-input mono" value="${escAttr(it.code)}" oninput="previewShortageCode('${b.id}',${idx},this.value)" onchange="updateShortageCell('${b.id}',${idx},'code',this.value)" onkeydown="handleShortageKeydown(event,'${b.id}',${idx})">
         <div class="mini-preview ${preview.cls}" id="short-preview-${b.id}-${idx}">${preview.html}</div>
       </td>
       <td><span class="del-x" onclick="removeShortageRow('${b.id}',${idx})">×</span></td>
@@ -817,12 +845,8 @@ function renderBranchCard(b){
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleShortageUpload('${b.id}', this)">
           <div class="status">${shortage.items.length ? `آخر تحديث: ${fmtDate(shortage.updatedAt)} — ${shortage.items.length} صنف` : 'لا توجد ليستة نواقص'}</div>
           ${noBalanceCodes.length ? `<button class="btn btn-danger btn-sm" style="margin-top:8px; width:100%" onclick="deleteNoBalanceShortage('${b.id}')">🗑 حذف ${noBalanceCodes.length} صنف بدون رصيد</button>` : ''}
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
-            <button class="btn btn-ghost btn-sm" onclick="addShortageRow('${b.id}')">+ إضافة صنف واحد</button>
-            <button class="btn btn-ghost btn-sm" onclick="openBulkAddShortage('${b.id}')">+ إضافة أصناف بالجملة</button>
-          </div>
+          <input class="code-search" placeholder="ابحث بالكود أو الاسم..." oninput="filterShortageTable('${b.id}', this.value)">
           ${shortage.items.length ? `
-          <input class="code-search" style="margin-top:10px" placeholder="ابحث بالكود أو الاسم..." oninput="filterShortageTable('${b.id}', this.value)">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px; gap:8px;">
             <label style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--ink-soft);">
               <input type="checkbox" onchange="toggleSelectAllShortage('${b.id}', this.checked)"> تحديد الكل
@@ -835,6 +859,7 @@ function renderBranchCard(b){
               <tbody>${shortRows}</tbody>
             </table>
           </div>` : ''}
+          <button class="btn btn-ghost btn-sm" style="width:100%; margin-top:10px" onclick="openBulkAddShortage('${b.id}')">+ إضافة أصناف بالجملة</button>
         </div>
 
         <div class="box">
