@@ -519,6 +519,27 @@ function deleteSelectedShortage(branchId){
   toast('تم حذف '+idxs.length+' صنف');
 }
 
+/* حذف كل أصناف ليستة النواقص التي ليس لها رصيد (أو غير موجودة) فى الليستة اليومية */
+function deleteNoBalanceShortage(branchId){
+  const main = getMain(branchId);
+  const s = getShortage(branchId);
+  const idxs = s.items
+    .map((it, idx) => idx)
+    .filter(idx => {
+      const code = s.items[idx].code;
+      const found = main && main.items.find(m => m.code === code);
+      return !found || found.qty <= 0;
+    })
+    .sort((a,b)=>b-a);
+  if(!idxs.length){ toast('لا توجد أصناف بدون رصيد للحذف'); return; }
+  if(!confirm('حذف '+idxs.length+' صنف بدون رصيد من ليستة النواقص؟')) return;
+  idxs.forEach(i => s.items.splice(i,1));
+  s.updatedAt = now();
+  saveShortage(branchId, s);
+  renderBranches(branchId);
+  toast('تم حذف '+idxs.length+' صنف بدون رصيد');
+}
+
 /* ===================== SHORTAGE: BULK ADD ===================== */
 let bulkAddBranchId = null;
 function openBulkAddShortage(branchId){
@@ -602,6 +623,21 @@ function filterShortageTable(branchId, value){
   });
 }
 
+
+/* بحث بالكود أو الاسم داخل جدول الريبورت الناتج (فلترة الصفوف المعروضة) */
+function filterReportTable(branchId, value){
+  const q = norm(value).toLowerCase();
+  let visible = 0;
+  document.querySelectorAll('#rep-table-'+branchId+' tbody tr').forEach(tr=>{
+    const code = (tr.dataset.code||'');
+    const name = (tr.dataset.name||'');
+    const match = !q || code.includes(q) || name.includes(q);
+    tr.style.display = match ? '' : 'none';
+    if(match) visible++;
+  });
+  const countEl = document.getElementById('rep-count-'+branchId);
+  if(countEl) countEl.textContent = q ? (visible+' صنف مطابق من إجمالي '+document.querySelectorAll('#rep-table-'+branchId+' tbody tr').length) : (document.querySelectorAll('#rep-table-'+branchId+' tbody tr').length+' صنف');
+}
 
 /* ===================== GENERATE REPORTS ===================== */
 function generateReports(branchId){
@@ -780,7 +816,7 @@ function renderBranchCard(b){
           <div class="row-check"><input type="checkbox" id="shortHeader-${b.id}" checked> <label for="shortHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleShortageUpload('${b.id}', this)">
           <div class="status">${shortage.items.length ? `آخر تحديث: ${fmtDate(shortage.updatedAt)} — ${shortage.items.length} صنف` : 'لا توجد ليستة نواقص'}</div>
-          ${noBalanceCodes.length ? `<div class="expiry-note" style="margin-top:6px">⚠ ${noBalanceCodes.length} كود بدون رصيد فى الليستة اليومية: ${noBalanceCodes.map(c=>escHtml(c)).join('، ')}</div>` : ''}
+          ${noBalanceCodes.length ? `<button class="btn btn-danger btn-sm" style="margin-top:8px; width:100%" onclick="deleteNoBalanceShortage('${b.id}')">🗑 حذف ${noBalanceCodes.length} صنف بدون رصيد</button>` : ''}
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
             <button class="btn btn-ghost btn-sm" onclick="addShortageRow('${b.id}')">+ إضافة صنف واحد</button>
             <button class="btn btn-ghost btn-sm" onclick="openBulkAddShortage('${b.id}')">+ إضافة أصناف بالجملة</button>
@@ -806,7 +842,7 @@ function renderBranchCard(b){
           <div class="sub">يتم حذف أصناف النواقص بالكامل من الليستة، ثم توليد ريبورت Instashop/Vezeeta و Talabat</div>
           <button class="btn btn-accent btn-sm" style="width:100%" ${(!main||!main.items.length) ? 'disabled' : ''} onclick="generateReports('${b.id}')">إنشاء / تحديث الريبورتات</button>
           ${reports ? `
-            <div class="status" style="margin-top:10px">تم الإنشاء: ${fmtDate(reports.generatedAt)}<br>تم حذف ${reports.matchedCount} صنف (ليستة النواقص)</div>
+            <div class="status" style="margin-top:10px">تم الإنشاء: ${fmtDate(reports.generatedAt)}<br>تم حذف ${reports.matchedCount} صنف (ليستة النواقص)<br>الإجمالي بعد الحذف: <b>${reports.items.length}</b> صنف</div>
             <div class="reports-actions">
               <button class="btn btn-ghost btn-sm" onclick="downloadInstashop('${b.id}')">⬇ Instashop / Vezeeta</button>
               <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ Talabat (CSV)</button>
@@ -831,14 +867,16 @@ function renderReports(){
   }
   wrap.innerHTML = branches.map(b=>{
     const r = getReports(b.id);
-    const rows = r.items.slice(0,8).map(it=>`<tr><td class="mono">${escHtml(it.code)}</td><td>${escHtml(it.name)}</td><td>${it.price}</td><td>${it.balance}</td></tr>`).join('');
-    const more = r.items.length > 8 ? `<div class="hint" style="padding:8px 12px">+ ${r.items.length-8} صنف آخر — حمّل الملف لعرض الكل</div>` : '';
+    const rows = r.items.map(it=>
+      `<tr data-code="${escAttr((it.code||'').toLowerCase())}" data-name="${escAttr((it.name||'').toLowerCase())}"><td class="mono">${escHtml(it.code)}</td><td>${escHtml(it.name)}</td><td>${it.price}</td><td>${it.balance}</td></tr>`
+    ).join('');
     return `
     <div class="branch-card">
       <div class="branch-head" style="cursor:default">
         <div class="name"><span class="dot"></span><h3>${escHtml(b.name)}</h3></div>
         <div class="branch-meta">
           <span>أُنشئ: ${fmtDate(r.generatedAt)}</span>
+          <span class="badge badge-ok">الإجمالي: ${r.items.length} صنف</span>
           <span class="badge badge-warn">يُحذف تلقائيًا: ${fmtDate(r.generatedAt + 1000*60*60*24*2)}</span>
         </div>
       </div>
@@ -847,13 +885,14 @@ function renderReports(){
           <button class="btn btn-accent btn-sm" onclick="downloadInstashop('${b.id}')">⬇ تحميل Instashop / Vezeeta</button>
           <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ تحميل Talabat (CSV)</button>
         </div>
-        <div class="table-wrap">
-          <table class="rep-table">
+        <input class="code-search" placeholder="ابحث بالكود أو الاسم..." oninput="filterReportTable('${b.id}', this.value)">
+        <div class="table-wrap" style="margin-top:10px">
+          <table class="rep-table" id="rep-table-${b.id}">
             <thead><tr><th>الكود</th><th>اسم الصنف</th><th>السعر</th><th>الرصيد</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
-        ${more}
+        <div class="hint" id="rep-count-${b.id}" style="padding:8px 2px 0">${r.items.length} صنف</div>
       </div>
     </div>`;
   }).join('');
