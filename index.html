@@ -383,6 +383,16 @@ document.querySelectorAll('nav.tabs button').forEach(btn=>{
   });
 });
 
+/* ===================== ESC: إغلاق أي مودال مفتوح ===================== */
+document.addEventListener('keydown', (e)=>{
+  if(e.key !== 'Escape') return;
+  const openModal = document.querySelector('.modal-bg.open');
+  if(!openModal) return;
+  if(openModal.id === 'addBranchModal') closeAddBranch();
+  else if(openModal.id === 'bulkAddModal') closeBulkAddShortage();
+  else openModal.classList.remove('open');
+});
+
 /* ===================== ADD / DELETE BRANCH ===================== */
 function openAddBranch(){
   document.getElementById('addBranchModal').classList.add('open');
@@ -490,7 +500,7 @@ function addShortageRow(branchId){
 function updateShortageCell(branchId, idx, field, value){
   const s = getShortage(branchId);
   if(!s.items[idx]) return;
-  s.items[idx][field] = value;
+  s.items[idx][field] = field === 'code' ? norm(value) : value;
   s.updatedAt = now();
   saveShortage(branchId, s);
 }
