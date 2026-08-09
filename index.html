@@ -652,9 +652,23 @@ const BRANCH_BALANCE_COLUMN = {
   'watanya': 'BR',
   'awl gamal': 'AD',
   'midtown': 'AH',
+  'midtwon': 'AH', /* تحسبًا لاختلاف كتابة الاسم */
   'abaasya': 'X',
   'j. tito': 'BP'
 };
+
+/* نسخة "منظّفة" من المفاتيح (بدون مسافات/نقط/شرطات) عشان فروق بسيطة زي مسافة زيادة
+   أو نقطة أو شرطة فى اسم الفرع متحدثش مشكلة فى المطابقة */
+function branchKeyClean(s){ return norm(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+const BRANCH_BALANCE_COLUMN_CLEAN = {};
+Object.keys(BRANCH_BALANCE_COLUMN).forEach(k=>{
+  BRANCH_BALANCE_COLUMN_CLEAN[branchKeyClean(k)] = BRANCH_BALANCE_COLUMN[k];
+});
+function getBranchBalanceColumn(branchName){
+  const exact = BRANCH_BALANCE_COLUMN[norm(branchName).toLowerCase()];
+  if(exact) return exact;
+  return BRANCH_BALANCE_COLUMN_CLEAN[branchKeyClean(branchName)] || null;
+}
 
 /* رفع شيت واحد موحد لكل الفروع: A=كود الصنف، B=اسم الصنف، M=سعر الصنف، ورصيد كل فرع فى عموده الخاص */
 async function handleUnifiedMainUpload(input){
@@ -671,8 +685,7 @@ async function handleUnifiedMainUpload(input){
     const matched = [], unmatched = [];
 
     branches.forEach(b=>{
-      const key = norm(b.name).toLowerCase();
-      const colLetter = BRANCH_BALANCE_COLUMN[key];
+      const colLetter = getBranchBalanceColumn(b.name);
       if(!colLetter){ unmatched.push(b.name); return; }
       const balCol = colToIndex(colLetter);
       const items = dataRows
