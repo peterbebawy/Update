@@ -1417,8 +1417,8 @@ function downloadTalabat(branchId){
 function buildTalabatFile(branchId){
   const r = getReports(branchId);
   if(!r) return null;
-  const rows = [['sku','barcode','price','Active','','maximum_sales_quantity']];
-  r.items.forEach(it => rows.push([it.code, '', it.price, it.balance, '', it.balance]));
+  const rows = [['sku','barcode','price','Active','quantity','maximum_sales_quantity']];
+  r.items.forEach(it => rows.push([it.code, '', it.price, 1, '', it.balance]));
   const csv = rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
   const blob = new Blob(['\uFEFF' + csv], {type: 'text/csv;charset=utf-8;'});
   return { filename: talabatFileName(branchId) + '.csv', blob };
