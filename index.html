@@ -197,6 +197,7 @@
   <nav class="tabs">
     <button class="active" data-view="branches">الفروع</button>
     <button data-view="searchchain">Search Chain</button>
+    <button data-view="unavailable">أصناف غير متوفرة</button>
   </nav>
   <div class="user-chip">
     <span id="userEmailLabel"></span>
@@ -265,6 +266,32 @@
     </div>
   </div>
 
+  <!-- ===== UNAVAILABLE ON APP VIEW ===== -->
+  <div class="view" id="view-unavailable">
+    <div class="toolbar">
+      <div>
+        <h2>أصناف غير متوفرة على الأبليكيشن</h2>
+        <div class="hint">ارفع كتالوج طويل الأمد لكل أبليكيشن (Instashop / Vezeeta / Talabat) لكل فرع — A كود الصنف · B Related to · C اسم الصنف · D كمية الصنف · E السعر. النظام يقارن كود كل صنف بالليستة اليومية (كود الصنف أو Related to) مع استبعاد أصناف النواقص، ويطلعلك أى صنف من الكتالوج مش متوفر فعليًا.</div>
+      </div>
+      <button class="btn btn-accent" onclick="generateUnavailableForAllBranches()">🔄 قارن كل الفروع دفعة واحدة</button>
+    </div>
+
+    <div class="box" style="margin-bottom:20px">
+      <h4>Export لكل الفروع دفعة واحدة</h4>
+      <div class="sub">تصدير كل شيتات "غير متوفر" لكل الفروع لكل أبليكيشن فى مجلد واحد على جهازك.</div>
+      <div class="reports-actions" style="margin-top:0">
+        <button class="btn btn-ghost btn-sm" onclick="exportAllUnavailableToFolder('instashop')">⬇ Export Instashop (كل الفروع)</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportAllUnavailableToFolder('vezeeta')">⬇ Export Vezeeta (كل الفروع)</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportAllUnavailableToFolder('talabat')">⬇ Export Talabat (كل الفروع)</button>
+      </div>
+    </div>
+
+    <div class="section-title">ملخص الإجمالي (غير متوفر / إجمالى الكتالوج)</div>
+    <div id="unavailable-summary" style="margin-bottom:20px"></div>
+
+    <div id="unavailable-list"></div>
+  </div>
+
 </main>
 
 <!-- Add branch modal -->
@@ -326,7 +353,7 @@ const now = () => Date.now();
 const TWO_DAYS = 1000*60*60*24*2;
 
 /* نسخة محلية (كاش) من بيانات فايربيز، تتحدث تلقائيًا لحظة أي تغيير عن طريق on('value') */
-let cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {} };
+let cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {}, catalogs: {}, unavailableReports: {} };
 let dataListenerAttached = false;
 
 function normalizeCache(v){
@@ -337,7 +364,9 @@ function normalizeCache(v){
     shortage: val.shortage || {},
     reports: val.reports || {},
     instashopReports: val.instashopReports || {},
-    settings: val.settings || {}
+    settings: val.settings || {},
+    catalogs: val.catalogs || {},
+    unavailableReports: val.unavailableReports || {}
   };
 }
 
@@ -375,6 +404,7 @@ function attachDataListener(){
     }
     expireOldReports();
     renderBranches();
+    renderUnavailableList();
     populateChainBranchFilter();
     const chainInput = document.getElementById('chainSearchInput');
     if(chainInput && chainInput.value) runSearchChain(chainInput.value);
@@ -405,7 +435,7 @@ function detachDataListener(){
   if(!dataListenerAttached) return;
   dataListenerAttached = false;
   firebase.database().ref('app_data').off();
-  cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {} };
+  cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {}, catalogs: {}, unavailableReports: {} };
   clearTimeout(firstLoadTimeoutTimer);
   firstDataReceived = false;
   if(connectionWatcherAttached){
@@ -1696,6 +1726,314 @@ function renderBranchBody(b){
 
       </div>
   `;
+}
+
+/* ===================== أصناف غير متوفرة على الأبليكيشن ===================== */
+const APP_LIST = ['instashop','vezeeta','talabat'];
+const APP_LABELS = {instashop:'Instashop', vezeeta:'Vezeeta', talabat:'Talabat'};
+
+function getCatalog(branchId, app){
+  return (cache.catalogs && cache.catalogs[branchId] && cache.catalogs[branchId][app]) || null;
+}
+function getUnavailableReport(branchId, app){
+  return (cache.unavailableReports && cache.unavailableReports[branchId] && cache.unavailableReports[branchId][app]) || null;
+}
+
+/* رفع كتالوج طويل الأمد لأبليكيشن معين لفرع معين: A كود الصنف، B Related to، C اسم الصنف، D كمية الصنف، E السعر */
+async function handleCatalogUpload(branchId, app, input){
+  const file = input.files[0];
+  if(!file) return;
+  const headerEl = document.getElementById('catHeader-'+app+'-'+branchId);
+  const hasHeader = headerEl ? headerEl.checked : true;
+  try{
+    const rows = await readWorkbookRows(file);
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    const items = dataRows
+      .filter(r => norm(r[0]) !== '')
+      .map(r => ({
+        code: norm(r[0]),
+        relatedTo: norm(r[1]),
+        name: norm(r[2]),
+        qty: toNum(r[3]),
+        price: toNum(r[4])
+      }));
+    const data = {uploadedAt: now(), fileName: file.name, items};
+    cache.catalogs[branchId] = cache.catalogs[branchId] || {};
+    cache.catalogs[branchId][app] = data;
+    firebaseWrite('app_data/catalogs/'+branchId+'/'+app, data);
+    toast('تم رفع كتالوج '+APP_LABELS[app]+': '+items.length+' صنف');
+    renderUnavailableList(branchId);
+  }catch(err){
+    console.error(err);
+    toast('حدث خطأ أثناء قراءة الملف');
+  }
+  input.value='';
+}
+
+function clearCatalog(branchId, app){
+  if(!confirm('هل تريد حذف كتالوج '+APP_LABELS[app]+' لهذا الفرع؟')) return;
+  if(cache.catalogs[branchId]) delete cache.catalogs[branchId][app];
+  firebaseRemove('app_data/catalogs/'+branchId+'/'+app);
+  if(cache.unavailableReports[branchId]) delete cache.unavailableReports[branchId][app];
+  firebaseRemove('app_data/unavailableReports/'+branchId+'/'+app);
+  toast('تم حذف الكتالوج');
+  renderUnavailableList(branchId);
+}
+
+/* مجموعة الأكواد "المتوفرة فعليًا" لفرع/أبليكيشن معين: كود الصنف أو Related to (كولوم L) من الليستة
+   اليومية، بشرط الرصيد >= 1 واستبعاد أى كود موجود فى ليستة النواقص — نفس منطق الريبورتات الحالية
+   بالظبط (مع استثناء الألبان فى Instashop) عشان تكون النتيجة متسقة مع الريبورتات المُصدَّرة فعلاً */
+function computeAvailableSet(branchId, app){
+  const main = getMain(branchId);
+  if(!main || !main.items.length) return null;
+  const shortage = getShortage(branchId);
+  const shortSet = new Set(shortage.items.map(s=>s.code).filter(Boolean));
+  const set = new Set();
+  main.items.forEach(it=>{
+    let available;
+    if(app === 'instashop'){
+      const milk = isMilkCategory(it.category);
+      if(milk){
+        available = true; // أصناف الألبان تعتبر متوفرة دائمًا فى Instashop، بغض النظر عن النواقص أو الرصيد
+      } else if(shortSet.has(it.code)){
+        available = false;
+      } else {
+        available = it.qty >= 1;
+      }
+    } else {
+      if(shortSet.has(it.code)) available = false;
+      else available = it.qty >= 1;
+    }
+    if(available){
+      if(it.code) set.add(it.code);
+      if(it.relatedTo) set.add(it.relatedTo);
+    }
+  });
+  return set;
+}
+
+/* يقارن كتالوج أبليكيشن معين لفرع معين بالمتوفر فعليًا، ويحفظ ريبورت "غير متوفر" */
+function generateUnavailableReportCore(branchId, app, updates){
+  const catalog = getCatalog(branchId, app);
+  if(!catalog || !catalog.items.length) return null;
+  const availSet = computeAvailableSet(branchId, app);
+  if(!availSet) return null; // لا توجد ليستة يومية لهذا الفرع بعد
+
+  const unavailable = catalog.items.filter(it => it.code && !availSet.has(it.code));
+  const data = {generatedAt: now(), items: unavailable, totalCatalog: catalog.items.length};
+  cache.unavailableReports[branchId] = cache.unavailableReports[branchId] || {};
+  cache.unavailableReports[branchId][app] = data;
+  const path = 'app_data/unavailableReports/'+branchId+'/'+app;
+  if(updates){ updates[path] = data; } else { firebaseWrite(path, data); }
+  return {count: unavailable.length, total: catalog.items.length};
+}
+
+function generateUnavailableForBranch(branchId){
+  const updates = {};
+  let done = 0;
+  APP_LIST.forEach(app=>{
+    const res = generateUnavailableReportCore(branchId, app, updates);
+    if(res) done++;
+  });
+  if(!done){ toast('ارفع كتالوج واحد على الأقل، مع رفع الليستة اليومية لهذا الفرع أولاً'); return; }
+  firebaseBatchWrite(updates);
+  renderUnavailableList(branchId);
+  toast('تم مقارنة '+done+' أبليكيشن لهذا الفرع');
+}
+
+function generateUnavailableForAllBranches(){
+  const branches = getBranches();
+  const updates = {};
+  let doneBranches = 0;
+  branches.forEach(b=>{
+    let doneApp = false;
+    APP_LIST.forEach(app=>{
+      const res = generateUnavailableReportCore(b.id, app, updates);
+      if(res) doneApp = true;
+    });
+    if(doneApp) doneBranches++;
+  });
+  if(!doneBranches){ toast('لا توجد كتالوجات مرفوعة لأى فرع بعد'); return; }
+  firebaseBatchWrite(updates);
+  renderUnavailableList();
+  toast('تم تحديث الريبورتات لـ '+doneBranches+' فرع');
+}
+
+/* ===================== EXPORT: أصناف غير متوفرة ===================== */
+function buildUnavailableFile(branchId, app){
+  const r = getUnavailableReport(branchId, app);
+  if(!r) return null;
+  const aoa = [['كود الصنف','Related to','اسم الصنف','كمية الصنف','السعر']];
+  r.items.forEach(it => aoa.push([it.code, it.relatedTo||'', it.name, it.qty, it.price]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:14},{wch:14},{wch:34},{wch:12},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  const name = branchName(branchId)+' - '+APP_LABELS[app]+' - غير متوفر';
+  XLSX.utils.book_append_sheet(wb, ws, safeSheetName(name));
+  const arr = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+  return {
+    workbook: wb,
+    filename: name+'.xlsx',
+    blob: new Blob([arr], {type:'application/octet-stream'})
+  };
+}
+function downloadUnavailable(branchId, app){
+  const f = buildUnavailableFile(branchId, app);
+  if(!f){ toast('أنشئ الريبورت أولاً (اضغط قارن)'); return; }
+  XLSX.writeFile(f.workbook, f.filename);
+}
+
+async function exportAllUnavailableToFolder(app){
+  const branches = getBranches().filter(b => getUnavailableReport(b.id, app));
+  if(!branches.length){ toast('لا توجد ريبورتات '+APP_LABELS[app]+' لتصديرها — اضغط قارن أولاً'); return; }
+
+  if(window.showDirectoryPicker){
+    const dir = await ensureDirAccess('unavailable'+app+'Dir', 'أصناف غير متوفرة - '+APP_LABELS[app]);
+    if(dir){
+      let count = 0;
+      for(const b of branches){
+        const f = buildUnavailableFile(b.id, app);
+        if(!f) continue;
+        await writeFileToDir(dir, f.filename, f.blob);
+        count++;
+      }
+      toast(`تم حفظ ${count} شيت فى المجلد المحدد`);
+      return;
+    }
+    toast('لم يتم اختيار مجلد — تم إلغاء العملية');
+    return;
+  }
+
+  branches.forEach((b, i)=>{ setTimeout(()=>downloadUnavailable(b.id, app), i*400); });
+  toast('متصفحك لا يدعم الحفظ التلقائى فى مجلد (استخدم Chrome أو Edge) — سيتم تنزيل الملفات لمجلد التنزيلات');
+}
+
+/* ===================== RENDER: أصناف غير متوفرة ===================== */
+function renderUnavailableList(keepOpenId){
+  const list = document.getElementById('unavailable-list');
+  if(!list) return;
+  const branches = getBranches();
+  if(!branches.length){
+    list.innerHTML = '<div class="empty"><b>لا يوجد فروع بعد</b>ابدأ بإضافة فرع من تبويب الفروع</div>';
+    renderUnavailableSummary();
+    return;
+  }
+  list.innerHTML = branches.map(b => renderUnavailableBranchCard(b, b.id === keepOpenId)).join('');
+  renderUnavailableSummary();
+}
+
+function renderUnavailableSummary(){
+  const el = document.getElementById('unavailable-summary');
+  if(!el) return;
+  const branches = getBranches();
+  const totals = {
+    instashop: {cat:0, un:0},
+    vezeeta: {cat:0, un:0},
+    talabat: {cat:0, un:0}
+  };
+  let any = false;
+  const rows = branches.map(b=>{
+    const cells = APP_LIST.map(app=>{
+      const r = getUnavailableReport(b.id, app);
+      if(r){
+        any = true;
+        totals[app].cat += r.totalCatalog;
+        totals[app].un += r.items.length;
+        return `${r.items.length} / ${r.totalCatalog}`;
+      }
+      return '—';
+    });
+    return `<tr><td>${escHtml(b.name)}</td><td>${cells[0]}</td><td>${cells[1]}</td><td>${cells[2]}</td></tr>`;
+  }).join('');
+
+  if(!any){
+    el.innerHTML = '<div class="empty"><b>لا توجد ريبورتات بعد</b>ارفع الكتالوجات لكل فرع واضغط "قارن"</div>';
+    return;
+  }
+  const totalRow = `<tr style="font-weight:800"><td>الإجمالي</td><td>${totals.instashop.un} / ${totals.instashop.cat}</td><td>${totals.vezeeta.un} / ${totals.vezeeta.cat}</td><td>${totals.talabat.un} / ${totals.talabat.cat}</td></tr>`;
+  el.innerHTML = `
+    <div class="table-wrap">
+      <table class="rep-table">
+        <thead><tr><th>الفرع</th><th>Instashop (غير متوفر / إجمالى)</th><th>Vezeeta (غير متوفر / إجمالى)</th><th>Talabat (غير متوفر / إجمالى)</th></tr></thead>
+        <tbody>${rows}${totalRow}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderUnavailableBranchCard(b, isOpen){
+  const badges = APP_LIST.map(app=>{
+    const r = getUnavailableReport(b.id, app);
+    return r
+      ? `<span class="badge badge-warn">${APP_LABELS[app]}: ${r.items.length} غير متوفر</span>`
+      : `<span class="badge badge-off">${APP_LABELS[app]}: لا يوجد ريبورت</span>`;
+  }).join('');
+
+  const bodyContent = isOpen ? renderUnavailableBranchBody(b) : '';
+
+  return `
+  <div class="branch-card">
+    <div class="branch-head" onclick="toggleUnavailableBranch('${b.id}')">
+      <div class="name"><span class="dot"></span><h3>${escHtml(b.name)}</h3></div>
+      <div class="branch-meta">${badges}</div>
+    </div>
+    <div class="branch-body${isOpen ? ' open' : ''}" id="unavail-body-${b.id}" data-rendered="${isOpen ? '1' : '0'}">${bodyContent}</div>
+  </div>`;
+}
+
+function toggleUnavailableBranch(id){
+  const el = document.getElementById('unavail-body-'+id);
+  if(!el) return;
+  const opening = !el.classList.contains('open');
+  el.classList.toggle('open');
+  if(opening && el.dataset.rendered !== '1'){
+    const b = getBranches().find(x=>x.id===id);
+    if(b){
+      el.innerHTML = renderUnavailableBranchBody(b);
+      el.dataset.rendered = '1';
+    }
+  }
+}
+
+function renderUnavailableBranchBody(b){
+  const boxes = APP_LIST.map(app => renderCatalogBox(b, app)).join('');
+  return `
+      <div class="grid3">${boxes}</div>
+      <div style="margin-top:14px">
+        <button class="btn btn-accent btn-sm" onclick="generateUnavailableForBranch('${b.id}')">🔄 قارن كل الأبليكيشنز لهذا الفرع</button>
+      </div>
+  `;
+}
+
+function renderCatalogBox(b, app){
+  const catalog = getCatalog(b.id, app);
+  const report = getUnavailableReport(b.id, app);
+  const rows = report ? report.items.map(it => `
+    <tr>
+      <td class="mono">${escHtml(it.code)}</td>
+      <td class="mono">${it.relatedTo ? escHtml(it.relatedTo) : '—'}</td>
+      <td>${escHtml(it.name)}</td>
+      <td>${it.qty}</td>
+      <td>${it.price}</td>
+    </tr>`).join('') : '';
+
+  return `
+    <div class="box">
+      <h4>${APP_LABELS[app]}</h4>
+      <div class="sub">كتالوج ${APP_LABELS[app]} الطويل لهذا الفرع — A كود الصنف · B Related to · C اسم الصنف · D كمية الصنف · E السعر</div>
+      <div class="row-check"><input type="checkbox" id="catHeader-${app}-${b.id}" checked> <label for="catHeader-${app}-${b.id}">الصف الأول عناوين</label></div>
+      <input type="file" accept=".xlsx,.xls,.csv" onchange="handleCatalogUpload('${b.id}','${app}', this)">
+      <div class="status">${catalog ? `📄 ${escHtml(catalog.fileName || 'ملف')}<br>آخر رفع: ${fmtDate(catalog.uploadedAt)} — ${catalog.items.length} صنف` : 'لم يتم رفع كتالوج بعد'}</div>
+      ${catalog ? `<button class="btn btn-danger btn-sm" style="width:100%; margin-top:6px" onclick="clearCatalog('${b.id}','${app}')">🗑 حذف الكتالوج</button>` : ''}
+      ${report ? `
+        <div class="status" style="margin-top:10px">تم الإنشاء: ${fmtDate(report.generatedAt)}<br>غير متوفر: <b>${report.items.length}</b> من إجمالى <b>${report.totalCatalog}</b> صنف</div>
+        <button class="btn btn-ghost btn-sm" style="width:100%; margin-top:6px" onclick="downloadUnavailable('${b.id}','${app}')">⬇ Export sheet</button>
+        <div class="table-wrap" style="max-height:220px; margin-top:8px">
+          <table class="rep-table">
+            <thead><tr><th>الكود</th><th>Related to</th><th>اسم الصنف</th><th>الكمية</th><th>السعر</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>` : ''}
+    </div>`;
 }
 
 /* ===================== SEARCH CHAIN (بحث شامل فى كل الفروع) ===================== */
