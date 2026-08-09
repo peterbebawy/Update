@@ -239,6 +239,19 @@
   </div>
 </div>
 
+<!-- Bulk add shortage codes modal -->
+<div class="modal-bg" id="bulkAddModal">
+  <div class="modal" style="width:420px">
+    <h3>إضافة أصناف بالجملة</h3>
+    <div style="font-size:12px; color:var(--ink-soft); margin:-8px 0 12px;">الصق الأكواد، كود في كل سطر (أو مفصولة بفاصلة)</div>
+    <textarea id="bulkAddCodes" class="mono" placeholder="مثال:&#10;12345&#10;67890&#10;54321" style="width:100%; min-height:140px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-family:'IBM Plex Mono',monospace; direction:ltr; text-align:right; font-size:13px; resize:vertical; margin-bottom:14px;"></textarea>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="closeBulkAddShortage()">إلغاء</button>
+      <button class="btn btn-accent" onclick="confirmBulkAddShortage()">إضافة</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 </div><!-- /appRoot -->
@@ -489,6 +502,50 @@ function removeShortageRow(branchId, idx){
   renderBranches(branchId);
 }
 
+/* ===================== SHORTAGE: SELECT & DELETE ===================== */
+function toggleSelectAllShortage(branchId, checked){
+  document.querySelectorAll('.short-check[data-branch="'+branchId+'"]').forEach(cb=>{ cb.checked = checked; });
+}
+function deleteSelectedShortage(branchId){
+  const checked = document.querySelectorAll('.short-check[data-branch="'+branchId+'"]:checked');
+  if(!checked.length){ toast('حدد صنف واحد على الأقل للحذف'); return; }
+  if(!confirm('حذف '+checked.length+' صنف محدد من ليستة النواقص؟')) return;
+  const idxs = Array.from(checked).map(cb => parseInt(cb.dataset.idx, 10)).sort((a,b)=>b-a);
+  const s = getShortage(branchId);
+  idxs.forEach(i => s.items.splice(i,1));
+  s.updatedAt = now();
+  saveShortage(branchId, s);
+  renderBranches(branchId);
+  toast('تم حذف '+idxs.length+' صنف');
+}
+
+/* ===================== SHORTAGE: BULK ADD ===================== */
+let bulkAddBranchId = null;
+function openBulkAddShortage(branchId){
+  bulkAddBranchId = branchId;
+  document.getElementById('bulkAddCodes').value = '';
+  document.getElementById('bulkAddModal').classList.add('open');
+  setTimeout(()=>document.getElementById('bulkAddCodes').focus(), 100);
+}
+function closeBulkAddShortage(){
+  document.getElementById('bulkAddModal').classList.remove('open');
+  bulkAddBranchId = null;
+}
+function confirmBulkAddShortage(){
+  if(!bulkAddBranchId) return;
+  const raw = document.getElementById('bulkAddCodes').value;
+  const codes = raw.split(/[\n,،\t]+/).map(c=>norm(c)).filter(Boolean);
+  if(!codes.length){ toast('اكتب أو الصق كودًا واحدًا على الأقل'); return; }
+  const s = getShortage(bulkAddBranchId);
+  codes.forEach(code => s.items.push({code}));
+  s.updatedAt = now();
+  saveShortage(bulkAddBranchId, s);
+  const branchId = bulkAddBranchId;
+  closeBulkAddShortage();
+  renderBranches(branchId);
+  toast('تم إضافة '+codes.length+' صنف لليستة النواقص');
+}
+
 /* ===================== CODE PREVIEW / SEARCH ===================== */
 /* يبحث عن كود صنف في الليستة اليومية ويرجع HTML لعرض اسمه، لاستخدامه فى المعاينة والبحث */
 function codePreviewHtml(main, code){
@@ -643,6 +700,7 @@ function renderBranchCard(b){
     const preview = codePreviewHtml(main, it.code);
     return `
     <tr>
+      <td style="width:6%"><input type="checkbox" class="short-check" data-branch="${b.id}" data-idx="${idx}"></td>
       <td>
         <input class="cell-input mono" value="${escAttr(it.code)}" oninput="previewShortageCode('${b.id}',${idx},this.value)" onchange="updateShortageCell('${b.id}',${idx},'code',this.value)">
         <div class="mini-preview ${preview.cls}" id="short-preview-${b.id}-${idx}">${preview.html}</div>
@@ -681,11 +739,20 @@ function renderBranchCard(b){
           <div class="row-check"><input type="checkbox" id="shortHeader-${b.id}" checked> <label for="shortHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleShortageUpload('${b.id}', this)">
           <div class="status">${shortage.items.length ? `آخر تحديث: ${fmtDate(shortage.updatedAt)} — ${shortage.items.length} صنف` : 'لا توجد ليستة نواقص'}</div>
-          <button class="btn btn-ghost btn-sm" onclick="addShortageRow('${b.id}')">+ إضافة صنف يدويًا</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-ghost btn-sm" onclick="addShortageRow('${b.id}')">+ إضافة صنف واحد</button>
+            <button class="btn btn-ghost btn-sm" onclick="openBulkAddShortage('${b.id}')">+ إضافة أصناف بالجملة</button>
+          </div>
           ${shortage.items.length ? `
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; gap:8px;">
+            <label style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--ink-soft);">
+              <input type="checkbox" onchange="toggleSelectAllShortage('${b.id}', this.checked)"> تحديد الكل
+            </label>
+            <button class="btn btn-danger btn-sm" onclick="deleteSelectedShortage('${b.id}')">حذف المحدد</button>
+          </div>
           <div class="table-wrap">
             <table class="data">
-              <thead><tr><th style="width:85%">الكود</th><th style="width:8%"></th></tr></thead>
+              <thead><tr><th style="width:6%"></th><th style="width:79%">الكود</th><th style="width:8%"></th></tr></thead>
               <tbody>${shortRows}</tbody>
             </table>
           </div>` : ''}
