@@ -361,7 +361,7 @@ function doLogin() {
       errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
     });
 }
-      function initApp() {
+   function initApp() {
   console.log("🚀 initApp started");
 
   firebase.database().ref("users").once("value")
@@ -378,7 +378,7 @@ function doLogin() {
 
       console.log("👥 users:", usersData);
 
-      // عرض المحتوى مباشرة
+      // عرض المحتوى مباشرة بعد تسجيل الدخول
       if (typeof renderBranches === "function") {
         console.log("📂 جاري عرض الفروع...");
         renderBranches();
@@ -391,7 +391,6 @@ function doLogin() {
       console.error("❌ Users:", err);
     });
 }
-
 function doLogout(){
   if(!confirm('هل تريد تسجيل الخروج؟')) return;
   currentUser = null;
