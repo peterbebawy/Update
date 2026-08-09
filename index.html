@@ -11,6 +11,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="firebase-config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --ink:#1c2321;
@@ -181,7 +182,7 @@
     <div class="mark">ف</div>
     <div>
       <h1>نظام إدارة مخزون الفروع</h1>
-      <p>تحديث الأرصدة اليومي وتوليد ريبورتات Instashop / Visita / Talabat</p>
+      <p>تحديث الأرصدة اليومي وتوليد ريبورتات Instashop / Vezeeta / Talabat</p>
     </div>
   </div>
   <nav class="tabs">
@@ -206,28 +207,6 @@
       <button class="btn btn-accent" onclick="openAddBranch()">+ إضافة فرع</button>
     </div>
     <div id="branches-list"></div>
-    <div id="addBranchModal" class="modal-overlay hidden">
-  <div class="modal-box">
-    <h3>إضافة فرع</h3>
-
-    <input
-      type="text"
-      id="newBranchName"
-      class="input"
-      placeholder="اسم الفرع"
-    >
-
-    <div style="display:flex;gap:10px;margin-top:15px;">
-      <button class="btn btn-accent" onclick="addBranch()">
-        ✅ حفظ
-      </button>
-
-      <button class="btn" onclick="closeAddBranch()">
-        إلغاء
-      </button>
-    </div>
-  </div>
-</div>
   </div>
 
   <!-- ===== REPORTS VIEW ===== -->
@@ -283,59 +262,6 @@ function clearReports(id){ LS.del('ibs_reports_'+id); }
 function norm(v){ return (v===undefined||v===null) ? '' : String(v).trim(); }
 function toNum(v){ const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 function fmtDate(ts){ if(!ts) return '—'; const d = new Date(ts); return d.toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' + d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}); }
-function openAddBranch() {
-  const modal = document.getElementById('addBranchModal');
-  const input = document.getElementById('newBranchName');
-
-  if (!modal) {
-    console.error('❌ addBranchModal غير موجود');
-    return;
-  }
-
-  modal.classList.remove('hidden');
-
-  if (input) {
-    input.value = '';
-    setTimeout(() => input.focus(), 100);
-  }
-}
-
-function closeAddBranch() {
-  const modal = document.getElementById('addBranchModal');
-
-  if (modal) {
-    modal.classList.add('hidden');
-  }
-}
-
-function addBranch() {
-  const input = document.getElementById('newBranchName');
-  const name = input ? input.value.trim() : '';
-
-  if (!name) {
-    alert('اكتب اسم الفرع');
-    return;
-  }
-
-  firebase.database().ref('branches').push({
-    name: name,
-    createdAt: firebase.database.ServerValue.TIMESTAMP
-  })
-  .then(() => {
-    console.log('✅ تم إضافة الفرع:', name);
-
-    closeAddBranch();
-
-    if (typeof renderBranches === 'function') {
-      renderBranches();
-    }
-  })
-  .catch(err => {
-    console.error('❌ خطأ في إضافة الفرع:', err);
-    alert('حدث خطأ أثناء إضافة الفرع');
-  });
-}
-  
 /* ===================== EXPIRE OLD REPORTS ===================== */
 function expireOldReports(){
   getBranches().forEach(b=>{
@@ -346,13 +272,15 @@ function expireOldReports(){
   });
 }
 
-/* ===================== AUTH (Firebase) ===================== */
+/* ===================== AUTH ===================== */
+/* تسجيل الدخول يتم بمطابقة اسم المستخدم/كلمة المرور مع عقدة users في قاعدة بيانات Firebase */
 let appInitialized = false;
+let currentUser = LS.get('ibs_current_user', null);
 
 function showApp(user){
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appRoot').style.display = '';
-  document.getElementById('userEmailLabel').textContent = user.email || '';
+  document.getElementById('userEmailLabel').textContent = user.name || user.email || '';
   document.getElementById('loginError').textContent = '';
   document.getElementById('loginPassword').value = '';
   if(!appInitialized){
@@ -367,25 +295,21 @@ function showLogin(){
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('appRoot').style.display = 'none';
 }
-```js
-```js
-function doLogin() {
+
+function doLogin(){
   const username = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
-
   errEl.textContent = '';
 
-  if (!username || !password) {
+  if(!username || !password){
     errEl.textContent = 'من فضلك أدخل اسم المستخدم وكلمة المرور';
     return;
   }
 
   firebase.database().ref('users').once('value')
     .then(snapshot => {
-
       const users = snapshot.val() || {};
-
       const found = Object.entries(users).find(([id, user]) =>
         user &&
         user.name &&
@@ -394,142 +318,31 @@ function doLogin() {
         String(user.pass) === String(password)
       );
 
-      if (!found) {
+      if(!found){
         errEl.textContent = 'اسم المستخدم أو كلمة المرور غير صحيحة';
         return;
       }
 
       const [userId, userData] = found;
-
-      currentUser = {
-        id: userId,
-        ...userData
-      };
-
-      console.log('✅ تم تسجيل الدخول:', currentUser);
-
-      // إخفاء شاشة تسجيل الدخول
-      const loginScreen = document.getElementById('loginScreen');
-
-      if (loginScreen) {
-        loginScreen.classList.add('hidden');
-        loginScreen.style.display = 'none';
-      }
-
-      // إظهار التطبيق
-      const appRoot = document.getElementById('appRoot');
-
-      if (appRoot) {
-        appRoot.style.display = '';
-      } else {
-        console.error('❌ appRoot غير موجود في الصفحة');
-        return;
-      }
-
-      // تشغيل التطبيق بعد تسجيل الدخول
-      try {
-        initApp();
-      } catch (err) {
-        console.error('❌ initApp error:', err);
-      }
-
+      currentUser = { id: userId, ...userData };
+      LS.set('ibs_current_user', currentUser);
+      showApp(currentUser);
     })
     .catch(err => {
-      console.error('❌ Login error:', err);
-      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
+      console.error('Login error:', err);
+      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول، تأكد من الاتصال بالإنترنت وحاول مرة أخرى';
     });
 }
-```
 
-  initApp();
-
-  // عرض المحتوى مباشرة بعد تسجيل الدخول
-  setTimeout(() => {
-    if (typeof renderBranches === 'function') {
-      console.log('📂 جاري عرض الفروع...');
-      renderBranches();
-    } else {
-      console.error('❌ renderBranches غير موجودة');
-    }
-  }, 100);
-
-} catch (err) {
-  console.error('❌ initApp error:', err);
-}
-```
-```js
-function initApp() {
-  console.log("🚀 initApp started");
-
-  // تحميل المستخدمين
-  firebase.database().ref("users").once("value")
-    .then(snapshot => {
-      usersData = [];
-
-      snapshot.forEach(child => {
-        usersData.push({
-          id: child.key,
-          ...child.val()
-        });
-      });
-
-      console.log("👥 users:", usersData);
-
-      // بعد تحميل البيانات، اعرض الفروع مباشرة
-      if (typeof renderBranches === 'function') {
-        console.log("📂 عرض الفروع...");
-        renderBranches();
-      } else {
-        console.error("❌ renderBranches غير موجودة");
-      }
-    })
-    .catch(err => {
-      console.error("❌ Users:", err);
-    });
-}
-```
-
-
-  // تحميل الأوردرات
-  firebase.database().ref("orders").once("value")
-    .then(snapshot => {
-      ordersData = [];
-
-      snapshot.forEach(child => {
-        ordersData.push({
-          id: child.key,
-          ...child.val()
-        });
-      });
-
-      ordersData.sort((a, b) =>
-        (b.timestamp || 0) - (a.timestamp || 0)
-      );
-
-      console.log("📦 orders:", ordersData);
-
-      if (currentUser) {
-        if (typeof renderMyOrders === "function") {
-          renderMyOrders();
-        }
-
-        if (typeof renderAllOrders === "function") {
-          renderAllOrders();
-        }
-      }
-    })
-    .catch(err => {
-      console.error("❌ Orders:", err);
-    });
-}
 function doLogout(){
   if(!confirm('هل تريد تسجيل الخروج؟')) return;
-  firebase.auth().signOut();
+  currentUser = null;
+  appInitialized = false;
+  LS.del('ibs_current_user');
+  showLogin();
 }
 
-firebase.auth().onAuthStateChanged(user=>{
-  if(user){ showApp(user); } else { showLogin(); }
-});
+if(currentUser){ showApp(currentUser); } else { showLogin(); }
 
 /* ===================== TOAST ===================== */
 let toastTimer;
@@ -627,7 +440,7 @@ async function handleMainUpload(branchId, input){
   input.value='';
 }
 
-/* Shortage columns: A=code,B=name,C=qty */
+/* ليستة النواقص: عمود A فقط = كود الصنف. أي كود موجود هنا يتم حذف صنفه بالكامل من الريبورتات */
 async function handleShortageUpload(branchId, input){
   const file = input.files[0];
   if(!file) return;
@@ -637,7 +450,7 @@ async function handleShortageUpload(branchId, input){
     const dataRows = hasHeader ? rows.slice(1) : rows;
     const items = dataRows
       .filter(r => norm(r[0]) !== '')
-      .map(r => ({ code: norm(r[0]), name: norm(r[1]), qty: toNum(r[2]) }));
+      .map(r => ({ code: norm(r[0]) }));
     saveShortage(branchId, {updatedAt: now(), items});
     toast('تم تحديث ليستة النواقص: '+items.length+' صنف');
     renderBranches();
@@ -651,7 +464,7 @@ async function handleShortageUpload(branchId, input){
 /* ===================== SHORTAGE MANUAL EDIT ===================== */
 function addShortageRow(branchId){
   const s = getShortage(branchId);
-  s.items.push({code:'', name:'', qty:0});
+  s.items.push({code:''});
   s.updatedAt = now();
   saveShortage(branchId, s);
   renderBranches(branchId);
@@ -659,7 +472,7 @@ function addShortageRow(branchId){
 function updateShortageCell(branchId, idx, field, value){
   const s = getShortage(branchId);
   if(!s.items[idx]) return;
-  s.items[idx][field] = (field==='qty') ? toNum(value) : value;
+  s.items[idx][field] = value;
   s.updatedAt = now();
   saveShortage(branchId, s);
 }
@@ -677,22 +490,20 @@ function generateReports(branchId){
   const shortage = getShortage(branchId);
   if(!main || !main.items.length){ toast('ارفع الليستة اليومية أولاً'); return; }
 
-  const shortMap = {};
-  shortage.items.forEach(s=>{ if(s.code) shortMap[s.code] = (shortMap[s.code]||0) + toNum(s.qty); });
+  const shortSet = new Set(shortage.items.map(s=>s.code).filter(Boolean));
 
-  let matched = 0;
+  let removed = 0;
   const processed = main.items
-    .map(it=>{
-      const deduct = shortMap[it.code] || 0;
-      if(deduct) matched++;
-      const rawBalance = it.qty - deduct;
-      return {code: it.code, name: it.name, price: it.price, balance: Math.floor(rawBalance)};
+    .filter(it=>{
+      if(shortSet.has(it.code)){ removed++; return false; }
+      return true;
     })
-    .filter(it => it.balance >= 1); // نشيل أي صنف رصيده أقل من 1، والكسور تتقرب للرقم الأقل
+    .map(it=>({code: it.code, name: it.name, price: it.price, balance: Math.floor(it.qty)}))
+    .filter(it => it.balance >= 1); // نشيل أي صنف رصيده أقل من 1
 
-  saveReports(branchId, {generatedAt: now(), items: processed, matchedCount: matched});
+  saveReports(branchId, {generatedAt: now(), items: processed, matchedCount: removed});
   renderBranches(branchId);
-  toast('تم إنشاء الريبورتات — تم خصم النواقص من '+matched+' صنف، واستبعاد الأصناف الأقل من 1');
+  toast('تم إنشاء الريبورتات — تم حذف '+removed+' صنف من ليستة النواقص بالكامل');
 }
 
 /* ===================== EXPORT XLSX ===================== */
@@ -706,8 +517,8 @@ function downloadInstashop(branchId){
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{wch:14},{wch:34},{wch:12},{wch:10}];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Instashop-Visita');
-  XLSX.writeFile(wb, branchName(branchId)+' - Instashop-Visita.xlsx');
+  XLSX.utils.book_append_sheet(wb, ws, 'Instashop-Vezeeta');
+  XLSX.writeFile(wb, branchName(branchId)+' - Instashop-Vezeeta.xlsx');
 }
 
 function downloadTalabat(branchId){
@@ -751,8 +562,6 @@ function renderBranchCard(b){
   const shortRows = shortage.items.map((it, idx) => `
     <tr>
       <td><input class="cell-input mono" value="${escAttr(it.code)}" onchange="updateShortageCell('${b.id}',${idx},'code',this.value)"></td>
-      <td><input class="cell-input" value="${escAttr(it.name)}" onchange="updateShortageCell('${b.id}',${idx},'name',this.value)"></td>
-      <td><input class="cell-input mono" style="width:70px" type="number" value="${it.qty}" onchange="updateShortageCell('${b.id}',${idx},'qty',this.value)"></td>
       <td><span class="del-x" onclick="removeShortageRow('${b.id}',${idx})">×</span></td>
     </tr>`).join('');
 
@@ -780,7 +589,7 @@ function renderBranchCard(b){
 
         <div class="box">
           <h4>ليستة النواقص (ثابتة — تحديث أسبوعي)</h4>
-          <div class="sub">أعمدة: A كود الصنف · B اسم الصنف · C الكمية الناقصة</div>
+          <div class="sub">عمود واحد فقط: A = كود الصنف. أي كود موجود في هذه الليستة يُحذف صنفه بالكامل من الريبورتات</div>
           <div class="row-check"><input type="checkbox" id="shortHeader-${b.id}" checked> <label for="shortHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleShortageUpload('${b.id}', this)">
           <div class="status">${shortage.items.length ? `آخر تحديث: ${fmtDate(shortage.updatedAt)} — ${shortage.items.length} صنف` : 'لا توجد ليستة نواقص'}</div>
@@ -788,7 +597,7 @@ function renderBranchCard(b){
           ${shortage.items.length ? `
           <div class="table-wrap">
             <table class="data">
-              <thead><tr><th style="width:30%">الكود</th><th>الاسم</th><th style="width:20%">الكمية</th><th style="width:8%"></th></tr></thead>
+              <thead><tr><th style="width:85%">الكود</th><th style="width:8%"></th></tr></thead>
               <tbody>${shortRows}</tbody>
             </table>
           </div>` : ''}
@@ -796,12 +605,12 @@ function renderBranchCard(b){
 
         <div class="box">
           <h4>الريبورتات</h4>
-          <div class="sub">يتم خصم النواقص من الرصيد، ثم توليد ريبورت Instashop/Visita و Talabat</div>
+          <div class="sub">يتم حذف أصناف النواقص بالكامل من الليستة، ثم توليد ريبورت Instashop/Vezeeta و Talabat</div>
           <button class="btn btn-accent btn-sm" style="width:100%" ${(!main||!main.items.length) ? 'disabled' : ''} onclick="generateReports('${b.id}')">إنشاء / تحديث الريبورتات</button>
           ${reports ? `
-            <div class="status" style="margin-top:10px">تم الإنشاء: ${fmtDate(reports.generatedAt)}<br>تم خصم النواقص من ${reports.matchedCount} صنف</div>
+            <div class="status" style="margin-top:10px">تم الإنشاء: ${fmtDate(reports.generatedAt)}<br>تم حذف ${reports.matchedCount} صنف (ليستة النواقص)</div>
             <div class="reports-actions">
-              <button class="btn btn-ghost btn-sm" onclick="downloadInstashop('${b.id}')">⬇ Instashop / Visita</button>
+              <button class="btn btn-ghost btn-sm" onclick="downloadInstashop('${b.id}')">⬇ Instashop / Vezeeta</button>
               <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ Talabat</button>
             </div>
             <div class="expiry-note">سيُحذف هذا الريبورت تلقائيًا في ${fmtDate(reports.generatedAt + 1000*60*60*24*2)}</div>
@@ -837,7 +646,7 @@ function renderReports(){
       </div>
       <div class="branch-body open">
         <div class="reports-actions" style="margin-top:0; margin-bottom:14px;">
-          <button class="btn btn-accent btn-sm" onclick="downloadInstashop('${b.id}')">⬇ تحميل Instashop / Visita</button>
+          <button class="btn btn-accent btn-sm" onclick="downloadInstashop('${b.id}')">⬇ تحميل Instashop / Vezeeta</button>
           <button class="btn btn-ghost btn-sm" onclick="downloadTalabat('${b.id}')">⬇ تحميل Talabat</button>
         </div>
         <div class="table-wrap">
