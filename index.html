@@ -217,8 +217,12 @@
       <h4>رفع الليستة اليومية الموحدة (شيت واحد لكل الفروع)</h4>
       <div class="sub">شيت واحد يحتوى على كل الفروع معًا: عمود A كود الصنف، عمود B اسم الصنف، عمود M سعر الصنف، ورصيد كل فرع فى عموده الخاص به. يتم توزيع البيانات تلقائيًا على كل فرع حسب عمود رصيده.</div>
       <div class="row-check"><input type="checkbox" id="unifiedMainHeader" checked> <label for="unifiedMainHeader">الصف الأول عناوين</label></div>
-      <input type="file" accept=".xlsx,.xls,.csv" onchange="handleUnifiedMainUpload(this)">
+      <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap;">
+        <input type="file" accept=".xlsx,.xls,.csv" style="flex:1; min-width:200px" onchange="handleUnifiedMainUpload(this)">
+        <button class="btn btn-danger btn-sm" onclick="clearAllMain()">🗑 حذف الشيت من كل الفروع</button>
+      </div>
       <div class="status" id="unifiedMainStatus"></div>
+      <div id="unifiedMainChecklist"></div>
     </div>
 
     <div class="box" style="margin-bottom:20px">
@@ -359,12 +363,29 @@ function getBranches(){ return cache.branches || []; }
 function saveBranches(b){ cache.branches = b; firebaseWrite('app_data/branches', b); }
 function getMain(id){ return (cache.main && cache.main[id]) || null; }
 function saveMain(id, d){ cache.main[id] = d; firebaseWrite('app_data/main/'+id, d); }
-function clearMain(id){
-  if(!confirm('هل تريد حذف الشيت المرفوع لهذا الفرع؟ سيتم حذف الليستة اليومية بالكامل.')) return;
+function clearMainCore(id){
   delete cache.main[id];
   firebaseRemove('app_data/main/'+id);
+}
+function clearMain(id){
+  if(!confirm('هل تريد حذف الشيت المرفوع لهذا الفرع؟ سيتم حذف الليستة اليومية بالكامل.')) return;
+  clearMainCore(id);
   toast('تم حذف الشيت');
   renderBranches(id);
+}
+/* حذف الشيت من كل الفروع دفعة واحدة */
+function clearAllMain(){
+  const branches = getBranches();
+  const withMain = branches.filter(b => getMain(b.id));
+  if(!withMain.length){ toast('لا توجد ليستة يومية مرفوعة لأي فرع'); return; }
+  if(!confirm(`هل تريد حذف الليستة اليومية من كل الفروع (${withMain.length} فرع)؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+  withMain.forEach(b => clearMainCore(b.id));
+  const statusEl = document.getElementById('unifiedMainStatus');
+  if(statusEl) statusEl.innerHTML = '';
+  const checklistEl = document.getElementById('unifiedMainChecklist');
+  if(checklistEl) checklistEl.innerHTML = '';
+  renderBranches();
+  toast(`تم حذف الشيت من ${withMain.length} فرع`);
 }
 function getShortage(id){ return (cache.shortage && cache.shortage[id]) || {updatedAt:null, items:[]}; }
 function saveShortage(id, d){ cache.shortage[id] = d; firebaseWrite('app_data/shortage/'+id, d); }
@@ -569,6 +590,7 @@ async function handleUnifiedMainUpload(input){
   if(!file) return;
   const hasHeader = document.getElementById('unifiedMainHeader').checked;
   const statusEl = document.getElementById('unifiedMainStatus');
+  const checklistEl = document.getElementById('unifiedMainChecklist');
   try{
     const rows = await readWorkbookRows(file);
     const dataRows = hasHeader ? rows.slice(1) : rows;
@@ -590,11 +612,35 @@ async function handleUnifiedMainUpload(input){
           qty: toNum(r[balCol])
         }));
       saveMain(b.id, {uploadedAt: now(), fileName: file.name, items});
-      matched.push(b.name);
+      const withBalance = items.filter(it => it.qty > 0).length;
+      matched.push({name: b.name, col: colLetter, count: items.length, withBalance});
     });
 
     renderBranches();
     if(statusEl) statusEl.innerHTML = `آخر رفع: ${fmtDate(now())} — تم تحديث ${matched.length} فرع`;
+
+    if(checklistEl){
+      const rowsHtml = matched.map(m => `
+        <tr>
+          <td>✅ ${escHtml(m.name)}</td>
+          <td class="mono">${escHtml(m.col)}</td>
+          <td>${m.count}</td>
+          <td>${m.withBalance ? m.withBalance : `<span style="color:var(--red)">0 — تأكد من العمود</span>`}</td>
+        </tr>`).join('');
+      const unmatchedHtml = unmatched.map(n => `
+        <tr>
+          <td>⚠️ ${escHtml(n)}</td>
+          <td colspan="3" style="color:var(--amber)">لا يوجد عمود رصيد محدد لهذا الفرع — لم يُحدَّث</td>
+        </tr>`).join('');
+      checklistEl.innerHTML = `
+        <div class="table-wrap" style="margin-top:10px">
+          <table class="rep-table">
+            <thead><tr><th>الفرع</th><th>العمود</th><th>عدد الأصناف</th><th>أصناف برصيد &gt; 0</th></tr></thead>
+            <tbody>${rowsHtml}${unmatchedHtml}</tbody>
+          </table>
+        </div>`;
+    }
+
     let msg = 'تم رفع الليستة الموحدة: تحديث '+matched.length+' فرع';
     if(unmatched.length) msg += ' — بدون عمود رصيد محدد: '+unmatched.join('، ');
     toast(msg);
@@ -1207,7 +1253,6 @@ function renderBranchCard(b){
           <div class="status">
             ${main ? `📄 ${escHtml(main.fileName || 'ملف غير معروف الاسم')}<br>آخر رفع: ${fmtDate(main.uploadedAt)} — ${main.items.length} صنف` : 'لم يتم رفع أي ليستة بعد'}
           </div>
-          ${main ? `<button class="btn btn-danger btn-sm" style="width:100%; margin-bottom:8px" onclick="clearMain('${b.id}')">🗑 حذف الشيت</button>` : ''}
           <input class="code-search" placeholder="ابحث بالكود..." oninput="searchMainCode('${b.id}', this.value)">
           <div id="main-search-result-${b.id}"></div>
         </div>
