@@ -363,6 +363,15 @@ function firebaseWrite(path, value){
     toast('حدث خطأ أثناء الحفظ فى Firebase — تأكد من الاتصال بالإنترنت');
   });
 }
+/* كتابة عدة مسارات دفعة واحدة (بدل عدة كتابات منفصلة) — بتقلل عدد المرات اللي بيعاد فيها
+   تحميل كل بيانات فايربيز عن طريق مستمع app_data، وبالتالي بتقلل "الوقوف/الانتظار" بشكل كبير */
+function firebaseBatchWrite(updates){
+  if(!updates || !Object.keys(updates).length) return;
+  firebase.database().ref().update(updates).catch(err=>{
+    console.error('Firebase batch write error:', err);
+    toast('حدث خطأ أثناء الحفظ فى Firebase — تأكد من الاتصال بالإنترنت');
+  });
+}
 function firebaseRemove(path){
   firebase.database().ref(path).remove().catch(err=>{
     console.error('Firebase remove error:', path, err);
@@ -683,6 +692,7 @@ async function handleUnifiedMainUpload(input){
 
     const branches = getBranches();
     const matched = [], unmatched = [];
+    const updates = {};
 
     branches.forEach(b=>{
       const colLetter = getBranchBalanceColumn(b.name);
@@ -697,10 +707,14 @@ async function handleUnifiedMainUpload(input){
           price: toNum(r[12]),
           qty: toNum(r[balCol])
         }));
-      saveMain(b.id, {uploadedAt: now(), fileName: file.name, items});
+      const data = {uploadedAt: now(), fileName: file.name, items};
+      cache.main[b.id] = data;
+      updates['app_data/main/'+b.id] = data;
       const withBalance = items.filter(it => it.qty > 0).length;
       matched.push({name: b.name, col: colLetter, count: items.length, withBalance});
     });
+
+    firebaseBatchWrite(updates);
 
     renderBranches();
     if(statusEl) statusEl.innerHTML = `آخر رفع: ${fmtDate(now())} — تم تحديث ${matched.length} فرع`;
@@ -1065,7 +1079,7 @@ function filterBranchReportTable(branchId, value){
 }
 
 /* ===================== GENERATE REPORTS ===================== */
-function generateReportsCore(branchId){
+function generateReportsCore(branchId, updates){
   const main = getMain(branchId);
   const shortage = getShortage(branchId);
   if(!main || !main.items.length) return null;
@@ -1081,7 +1095,10 @@ function generateReportsCore(branchId){
     .map(it=>({code: it.code, name: it.name, price: it.price, balance: Math.floor(it.qty)}))
     .filter(it => it.balance >= 1); // نشيل أي صنف رصيده أقل من 1
 
-  saveReports(branchId, {generatedAt: now(), items: processed, matchedCount: removed});
+  const data = {generatedAt: now(), items: processed, matchedCount: removed};
+  cache.reports[branchId] = data;
+  if(updates){ updates['app_data/reports/'+branchId] = data; }
+  else { firebaseWrite('app_data/reports/'+branchId, data); }
   return {removed, count: processed.length};
 }
 
@@ -1096,7 +1113,7 @@ function isMilkCategory(category){
 
 /* ريبورت Instashop: نفس منطق Vezeeta بالظبط، فيما عدا أصناف الألبان — لا تُحذف حتى لو كانت
    فى ليستة النواقص، وتظهر بالرصيد الفعلي من الليستة اليومية (حتى لو أقل من 1) بدلاً من إخفائها */
-function generateInstashopReportCore(branchId){
+function generateInstashopReportCore(branchId, updates){
   const main = getMain(branchId);
   const shortage = getShortage(branchId);
   if(!main || !main.items.length) return null;
@@ -1117,14 +1134,19 @@ function generateInstashopReportCore(branchId){
     .map(it=>({code: it.code, name: it.name, price: it.price, balance: Math.floor(it.qty), milk: isMilkCategory(it.category)}))
     .filter(it => it.milk || it.balance >= 1); // غير الألبان: نفس شرط الرصيد ≥ 1، الألبان: تظهر دائمًا برصيدها الفعلي
 
-  saveInstashopReport(branchId, {generatedAt: now(), items: processed, matchedCount: removed, milkKept});
+  const data = {generatedAt: now(), items: processed, matchedCount: removed, milkKept};
+  cache.instashopReports[branchId] = data;
+  if(updates){ updates['app_data/instashopReports/'+branchId] = data; }
+  else { firebaseWrite('app_data/instashopReports/'+branchId, data); }
   return {removed, milkKept, count: processed.length};
 }
 
 function generateReports(branchId){
-  const res = generateReportsCore(branchId);
+  const updates = {};
+  const res = generateReportsCore(branchId, updates);
   if(!res){ toast('ارفع الليستة اليومية أولاً'); return; }
-  generateInstashopReportCore(branchId);
+  generateInstashopReportCore(branchId, updates);
+  firebaseBatchWrite(updates);
   renderBranches(branchId);
   toast('تم إنشاء الريبورتات — تم حذف '+res.removed+' صنف من ليستة النواقص بالكامل');
 }
@@ -1132,12 +1154,14 @@ function generateReports(branchId){
 /* إنشاء/تحديث الريبورتات لكل الفروع دفعة واحدة */
 function generateAllReports(){
   const branches = getBranches();
+  const updates = {};
   let done = 0, skipped = 0;
   branches.forEach(b=>{
-    const res = generateReportsCore(b.id);
-    if(res){ done++; generateInstashopReportCore(b.id); }
+    const res = generateReportsCore(b.id, updates);
+    if(res){ done++; generateInstashopReportCore(b.id, updates); }
     else skipped++;
   });
+  firebaseBatchWrite(updates);
   renderBranches();
   toast(`تم إنشاء/تحديث الريبورتات لـ ${done} فرع` + (skipped ? ' — تم تخطي '+skipped+' فرع بدون ليستة يومية' : ''));
 }
