@@ -333,18 +333,31 @@ function doLogin() {
       console.log('✅ تم تسجيل الدخول:', currentUser);
 
       // إخفاء شاشة تسجيل الدخول
-      document.getElementById('loginScreen').style.display = 'none';
+      const loginScreen = document.getElementById('loginScreen');
+      if (loginScreen) {
+        loginScreen.style.display = 'none';
+      }
 
       // إظهار التطبيق
-      document.getElementById('appRoot').style.display = 'block';
+      const appRoot = document.getElementById('appRoot');
+      if (appRoot) {
+        appRoot.style.display = 'block';
+      } else {
+        console.error('❌ appRoot غير موجود في الصفحة');
+        return;
+      }
 
       // تشغيل التطبيق
-      initApp();
+      try {
+        initApp();
+      } catch (err) {
+        console.error('❌ initApp error:', err);
+      }
 
     })
     .catch(err => {
       console.error('❌ Login error:', err);
-      errEl.textContent = 'حدث خطأ أثناء الاتصال بقاعدة البيانات';
+      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
     });
 }
 function doLogout(){
