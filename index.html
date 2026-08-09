@@ -296,20 +296,23 @@ function showLogin(){
   document.getElementById('appRoot').style.display = 'none';
 }
 
-function doLogin(){
+function doLogin() {
   const username = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
+
   errEl.textContent = '';
 
-  if(!username || !password){
+  if (!username || !password) {
     errEl.textContent = 'من فضلك أدخل اسم المستخدم وكلمة المرور';
     return;
   }
 
   firebase.database().ref('users').once('value')
     .then(snapshot => {
+
       const users = snapshot.val() || {};
+
       const found = Object.entries(users).find(([id, user]) =>
         user &&
         user.name &&
@@ -318,19 +321,46 @@ function doLogin(){
         String(user.pass) === String(password)
       );
 
-      if(!found){
+      if (!found) {
         errEl.textContent = 'اسم المستخدم أو كلمة المرور غير صحيحة';
         return;
       }
 
       const [userId, userData] = found;
-      currentUser = { id: userId, ...userData };
-      LS.set('ibs_current_user', currentUser);
-      showApp(currentUser);
+
+      currentUser = {
+        id: userId,
+        ...userData
+      };
+
+      console.log('تم تسجيل الدخول:', currentUser);
+
+      const loginScreen = document.getElementById('loginScreen');
+
+      if (loginScreen) {
+        loginScreen.classList.add('hidden');
+        loginScreen.style.display = 'none';
+      }
+
+      const appRoot = document.getElementById('appRoot');
+
+      if (appRoot) {
+        appRoot.style.display = '';
+      } else {
+        console.error('appRoot غير موجود في الصفحة');
+        return;
+      }
+
+      try {
+        initApp();
+      } catch (err) {
+        console.error('initApp error:', err);
+      }
+
     })
     .catch(err => {
       console.error('Login error:', err);
-      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول، تأكد من الاتصال بالإنترنت وحاول مرة أخرى';
+      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
     });
 }
 
