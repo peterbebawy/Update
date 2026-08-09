@@ -1322,8 +1322,14 @@ async function writeFileToDir(dirHandle, filename, blob){
 }
 
 /* تصدير كل شيتات Vezeeta لكل الفروع دفعة واحدة */
+/* فروع مستثناة من التصدير الجماعى لكل نوع ريبورت (بالاسم كما هو مكتوب فى النظام، بحروف صغيرة) */
+const VEZEETA_EXPORT_EXCLUDE = ['dar elyosr'];
+const INSTASHOP_EXPORT_EXCLUDE = ['abaasya'];
+
 async function exportAllVezeetaToFolder(){
-  const branches = getBranches().filter(b => getReports(b.id));
+  const branches = getBranches()
+    .filter(b => getReports(b.id))
+    .filter(b => !VEZEETA_EXPORT_EXCLUDE.includes(norm(b.name).toLowerCase()));
   if(!branches.length){ toast('لا توجد ريبورتات لتصديرها — أنشئ الريبورتات أولاً'); return; }
 
   if(window.showDirectoryPicker){
@@ -1336,7 +1342,7 @@ async function exportAllVezeetaToFolder(){
         await writeFileToDir(dir, f.filename, f.blob);
         count++;
       }
-      toast(`تم حفظ ${count} شيت Vezeeta فى المجلد المحدد`);
+      toast(`تم حفظ ${count} شيت Vezeeta فى المجلد المحدد (بدون Dar elyosr)`);
       return;
     }
     toast('لم يتم اختيار مجلد — تم إلغاء العملية');
@@ -1350,7 +1356,9 @@ async function exportAllVezeetaToFolder(){
 
 /* تصدير كل شيتات Instashop لكل الفروع دفعة واحدة — مسار حفظ مستقل عن فيزيتا */
 async function exportAllInstashopToFolder(){
-  const branches = getBranches().filter(b => getInstashopReport(b.id));
+  const branches = getBranches()
+    .filter(b => getInstashopReport(b.id))
+    .filter(b => !INSTASHOP_EXPORT_EXCLUDE.includes(norm(b.name).toLowerCase()));
   if(!branches.length){ toast('لا توجد ريبورتات Instashop لتصديرها — أنشئ الريبورتات أولاً'); return; }
 
   if(window.showDirectoryPicker){
@@ -1363,7 +1371,7 @@ async function exportAllInstashopToFolder(){
         await writeFileToDir(dir, f.filename, f.blob);
         count++;
       }
-      toast(`تم حفظ ${count} شيت Instashop فى المجلد المحدد`);
+      toast(`تم حفظ ${count} شيت Instashop فى المجلد المحدد (بدون Abaasya)`);
       return;
     }
     toast('لم يتم اختيار مجلد — تم إلغاء العملية');
@@ -1428,6 +1436,7 @@ function renderBranchCard(b){
   const mainBadge = main ? `<span class="badge badge-ok">آخر تحديث: ${fmtDate(main.uploadedAt)}</span>` : `<span class="badge badge-off">لم يتم الرفع</span>`;
   const shortBadge = shortage.items.length ? `<span class="badge badge-ok">${shortage.items.length} صنف ناقص</span>` : `<span class="badge badge-off">لا توجد نواقص</span>`;
   const repBadge = reports ? `<span class="badge badge-warn">تُحذف ${fmtDate(reports.generatedAt + 1000*60*60*24*2)}</span>` : `<span class="badge badge-off">لا يوجد ريبورت</span>`;
+  const instashopBadge = instashop ? `<span class="badge badge-warn">تُحذف ${fmtDate(instashop.generatedAt + 1000*60*60*24*2)}</span>` : `<span class="badge badge-off">لا يوجد ريبورت</span>`;
 
   const shortRows = shortage.items.map((it, idx) => {
     const preview = codePreviewHtml(main, it.code);
@@ -1475,7 +1484,8 @@ function renderBranchCard(b){
       <div class="branch-meta">
         <span>الليستة اليومية ${mainBadge}</span>
         <span>النواقص ${shortBadge}</span>
-        <span>الريبورت ${repBadge}</span>
+        <span>Vezeeta ${repBadge}</span>
+        <span>Instashop ${instashopBadge}</span>
       </div>
       <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteBranch('${b.id}')">حذف الفرع</button>
     </div>
@@ -1574,12 +1584,13 @@ function runSearchChain(value){
   }
 
   const branches = getBranches();
-  const mainHits = [], shortageHits = [], reportHits = [];
+  const mainHits = [], shortageHits = [], reportHits = [], instashopHits = [];
 
   branches.forEach(b=>{
     const main = getMain(b.id);
     const shortage = getShortage(b.id);
     const reports = getReports(b.id);
+    const instashop = getInstashopReport(b.id);
 
     if(main && main.items.length){
       main.items.forEach(it=>{
@@ -1606,6 +1617,14 @@ function runSearchChain(value){
         }
       });
     }
+
+    if(instashop && instashop.items.length){
+      instashop.items.forEach(it=>{
+        if(it.code.toLowerCase().includes(q) || (it.name||'').toLowerCase().includes(q)){
+          instashopHits.push({branch:b.name, code:it.code, name:it.name, price:it.price, balance:it.balance});
+        }
+      });
+    }
   });
 
   el.innerHTML =
@@ -1624,11 +1643,18 @@ function runSearchChain(value){
       'الصنف غير موجود فى أي ليستة نواقص'
     ) +
     renderChainSection(
-      'موجود فى الريبورت بعد حذف النواقص',
+      'موجود فى الريبورت فيزيتا/طلبات بعد حذف النواقص',
       ['الفرع','الكود','اسم الصنف','السعر','الرصيد'],
       reportHits,
       h=>`<tr><td>${escHtml(h.branch)}</td><td class="mono">${escHtml(h.code)}</td><td>${escHtml(h.name)}</td><td>${h.price}</td><td>${h.balance}</td></tr>`,
-      'الصنف غير موجود فى أي ريبورت (لم يُنشأ ريبورت، أو تم حذفه ضمن النواقص)'
+      'الصنف غير موجود فى أي ريبورت فيزيتا/طلبات (لم يُنشأ ريبورت، أو تم حذفه ضمن النواقص)'
+    ) +
+    renderChainSection(
+      'موجود فى ريبورت انستاشوب بعد حذف النواقص',
+      ['الفرع','الكود','اسم الصنف','السعر','الرصيد'],
+      instashopHits,
+      h=>`<tr><td>${escHtml(h.branch)}</td><td class="mono">${escHtml(h.code)}</td><td>${escHtml(h.name)}</td><td>${h.price}</td><td>${h.balance}</td></tr>`,
+      'الصنف غير موجود فى أي ريبورت انستاشوب (لم يُنشأ ريبورت، أو تم حذفه ضمن النواقص)'
     );
 }
 
