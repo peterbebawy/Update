@@ -339,6 +339,13 @@ function getBranches(){ return cache.branches || []; }
 function saveBranches(b){ cache.branches = b; firebaseWrite('app_data/branches', b); }
 function getMain(id){ return (cache.main && cache.main[id]) || null; }
 function saveMain(id, d){ cache.main[id] = d; firebaseWrite('app_data/main/'+id, d); }
+function clearMain(id){
+  if(!confirm('هل تريد حذف الشيت المرفوع لهذا الفرع؟ سيتم حذف الليستة اليومية بالكامل.')) return;
+  delete cache.main[id];
+  firebaseRemove('app_data/main/'+id);
+  toast('تم حذف الشيت');
+  renderBranches(id);
+}
 function getShortage(id){ return (cache.shortage && cache.shortage[id]) || {updatedAt:null, items:[]}; }
 function saveShortage(id, d){ cache.shortage[id] = d; firebaseWrite('app_data/shortage/'+id, d); }
 function getReports(id){ return (cache.reports && cache.reports[id]) || null; }
@@ -532,7 +539,7 @@ async function handleMainUpload(branchId, input){
         price: toNum(r[12]),
         qty: toNum(r[15])
       }));
-    saveMain(branchId, {uploadedAt: now(), items});
+    saveMain(branchId, {uploadedAt: now(), fileName: file.name, items});
     toast('تم رفع الليستة اليومية: '+items.length+' صنف');
     renderBranches();
   }catch(err){
@@ -937,7 +944,10 @@ function renderBranchCard(b){
           <div class="sub">أعمدة: A كود الصنف · B اسم الصنف · M سعر الصنف · P كمية الصنف</div>
           <div class="row-check"><input type="checkbox" id="mainHeader-${b.id}" checked> <label for="mainHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleMainUpload('${b.id}', this)">
-          <div class="status">${main ? `آخر رفع: ${fmtDate(main.uploadedAt)} — ${main.items.length} صنف` : 'لم يتم رفع أي ليستة بعد'}</div>
+          <div class="status">
+            ${main ? `📄 ${escHtml(main.fileName || 'ملف غير معروف الاسم')}<br>آخر رفع: ${fmtDate(main.uploadedAt)} — ${main.items.length} صنف` : 'لم يتم رفع أي ليستة بعد'}
+          </div>
+          ${main ? `<button class="btn btn-danger btn-sm" style="width:100%; margin-bottom:8px" onclick="clearMain('${b.id}')">🗑 حذف الشيت</button>` : ''}
           <input class="code-search" placeholder="ابحث بالكود..." oninput="searchMainCode('${b.id}', this.value)">
           <div id="main-search-result-${b.id}"></div>
         </div>
