@@ -287,7 +287,7 @@
 <div class="modal-bg" id="changePassModal">
   <div class="modal" style="width:360px">
     <h3>تغيير كلمة السر</h3>
-    <div style="font-size:12px; color:var(--ink-soft); margin:-8px 0 12px;">كلمة السر دي هي المستخدمة لتأكيد حذف أي فرع</div>
+    <div style="font-size:12px; color:var(--ink-soft); margin:-8px 0 12px;">دي كلمة سر حسابك اللي بتسجل بيها الدخول (<span id="changePassUserLabel"></span>)</div>
     <input type="password" id="oldPass" placeholder="كلمة السر الحالية">
     <input type="password" id="newPass" placeholder="كلمة السر الجديدة">
     <input type="password" id="newPass2" placeholder="تأكيد كلمة السر الجديدة" onkeydown="if(event.key==='Enter')confirmChangePassword()">
@@ -570,9 +570,11 @@ function deleteBranch(id){
 
 /* ===================== تغيير كلمة السر ===================== */
 function openChangePassword(){
+  if(!currentUser){ toast('لازم تسجل الدخول الأول'); return; }
   document.getElementById('oldPass').value = '';
   document.getElementById('newPass').value = '';
   document.getElementById('newPass2').value = '';
+  document.getElementById('changePassUserLabel').textContent = currentUser.name || currentUser.email || '';
   document.getElementById('changePassModal').classList.add('open');
   setTimeout(()=>document.getElementById('oldPass').focus(), 100);
 }
@@ -580,21 +582,35 @@ function closeChangePassword(){
   document.getElementById('changePassModal').classList.remove('open');
 }
 function confirmChangePassword(){
+  if(!currentUser || !currentUser.id){ toast('لازم تسجل الدخول الأول'); return; }
   const oldPass = document.getElementById('oldPass').value;
   const newPass = document.getElementById('newPass').value;
   const newPass2 = document.getElementById('newPass2').value;
-  const correctPass = (cache.settings && cache.settings.deleteBranchPassword) || DELETE_BRANCH_PASSWORD_DEFAULT;
 
   if(!oldPass){ toast('اكتب كلمة السر الحالية'); return; }
-  if(String(oldPass) !== String(correctPass)){ toast('كلمة السر الحالية غير صحيحة'); return; }
+  if(String(oldPass) !== String(currentUser.pass)){ toast('كلمة السر الحالية غير صحيحة'); return; }
   if(!newPass){ toast('اكتب كلمة السر الجديدة'); return; }
+  if(newPass.length < 4){ toast('كلمة السر الجديدة قصيرة جدًا (٤ حروف/أرقام على الأقل)'); return; }
   if(newPass !== newPass2){ toast('كلمة السر الجديدة وتأكيدها غير متطابقين'); return; }
+  if(String(newPass) === String(oldPass)){ toast('كلمة السر الجديدة مطابقة للقديمة'); return; }
 
-  cache.settings = cache.settings || {};
-  cache.settings.deleteBranchPassword = newPass;
-  firebaseWrite('app_data/settings/deleteBranchPassword', newPass);
-  closeChangePassword();
-  toast('تم تغيير كلمة السر بنجاح');
+  const btn = document.querySelector('#changePassModal .btn-accent');
+  if(btn){ btn.disabled = true; }
+
+  firebase.database().ref('users/'+currentUser.id).update({ pass: newPass })
+    .then(()=>{
+      currentUser.pass = newPass;
+      LS.set('ibs_current_user', currentUser);
+      closeChangePassword();
+      toast('تم تغيير كلمة السر بنجاح');
+    })
+    .catch(err=>{
+      console.error('Change password error:', err);
+      toast('حدث خطأ أثناء تغيير كلمة السر، حاول مرة أخرى');
+    })
+    .finally(()=>{
+      if(btn){ btn.disabled = false; }
+    });
 }
 
 /* ===================== TOGGLE BRANCH BODY ===================== */
