@@ -1,8 +1,11 @@
 const firebaseConfig = {
-  apiKey: "ضع_API_KEY_هنا",
-  authDomain: "ضع_PROJECT_ID.firebaseapp.com",
-  projectId: "ضع_PROJECT_ID_هنا",
-  storageBucket: "ضع_PROJECT_ID.appspot.com",
-  messagingSenderId: "ضع_SENDER_ID_هنا",
-  appId: "ضع_APP_ID_هنا"
+  apiKey: "القيمة_الحقيقية",
+  authDomain: "update-app-b7418.firebaseapp.com",
+  databaseURL: "https://update-app-b7418-default-rtdb.firebaseio.com",
+  projectId: "update-app-b7418",
+  storageBucket: "القيمة_الحقيقية",
+  messagingSenderId: "القيمة_الحقيقية",
+  appId: "القيمة_الحقيقية"
 };
+
+firebase.initializeApp(firebaseConfig);
