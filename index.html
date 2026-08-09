@@ -360,6 +360,59 @@ function doLogin() {
       errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
     });
 }
+  function initApp() {
+  console.log("🚀 initApp started");
+
+  // تحميل المستخدمين
+  firebase.database().ref("users").once("value")
+    .then(snapshot => {
+      usersData = [];
+
+      snapshot.forEach(child => {
+        usersData.push({
+          id: child.key,
+          ...child.val()
+        });
+      });
+
+      console.log("👥 users:", usersData);
+    })
+    .catch(err => {
+      console.error("❌ Users:", err);
+    });
+
+  // تحميل الأوردرات
+  firebase.database().ref("orders").once("value")
+    .then(snapshot => {
+      ordersData = [];
+
+      snapshot.forEach(child => {
+        ordersData.push({
+          id: child.key,
+          ...child.val()
+        });
+      });
+
+      ordersData.sort((a, b) =>
+        (b.timestamp || 0) - (a.timestamp || 0)
+      );
+
+      console.log("📦 orders:", ordersData);
+
+      if (currentUser) {
+        if (typeof renderMyOrders === "function") {
+          renderMyOrders();
+        }
+
+        if (typeof renderAllOrders === "function") {
+          renderAllOrders();
+        }
+      }
+    })
+    .catch(err => {
+      console.error("❌ Orders:", err);
+    });
+}
 function doLogout(){
   if(!confirm('هل تريد تسجيل الخروج؟')) return;
   firebase.auth().signOut();
