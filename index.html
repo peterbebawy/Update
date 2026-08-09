@@ -352,15 +352,34 @@ function doLogin() {
       }
 
       try {
-        initApp();
-      } catch (err) {
-        console.error('initApp error:', err);
+      function initApp() {
+  console.log("🚀 initApp started");
+
+  firebase.database().ref("users").once("value")
+    .then(snapshot => {
+
+      usersData = [];
+
+      snapshot.forEach(child => {
+        usersData.push({
+          id: child.key,
+          ...child.val()
+        });
+      });
+
+      console.log("👥 users:", usersData);
+
+      // عرض المحتوى مباشرة
+      if (typeof renderBranches === "function") {
+        console.log("📂 جاري عرض الفروع...");
+        renderBranches();
+      } else {
+        console.error("❌ renderBranches غير موجودة");
       }
 
     })
     .catch(err => {
-      console.error('Login error:', err);
-      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
+      console.error("❌ Users:", err);
     });
 }
 
