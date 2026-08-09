@@ -341,10 +341,33 @@ function normalizeCache(v){
   };
 }
 
+let firstDataReceived = false;
+let firstLoadTimeoutTimer = null;
+
 function attachDataListener(){
   if(dataListenerAttached) return;
   dataListenerAttached = true;
+
+  /* لو أول تحميل للبيانات ماخدش وقت طويل من غير ما يوصل، بنوضح للمستخدم إن فيه مشكلة اتصال
+     بدل ما يفضل شايف شاشة فاضية أو "جارٍ التحميل" لحد ما هو يفصل */
+  firstLoadTimeoutTimer = setTimeout(()=>{
+    if(firstDataReceived) return;
+    const list = document.getElementById('branches-list');
+    if(list){
+      list.innerHTML = `
+        <div class="empty">
+          <b>تعذّر تحميل البيانات</b>
+          الاتصال بقاعدة البيانات بطيء أو متعطل — تأكد من اتصالك بالإنترنت
+          <div style="margin-top:14px">
+            <button class="btn btn-accent btn-sm" onclick="location.reload()">🔄 إعادة تحميل الصفحة</button>
+          </div>
+        </div>`;
+    }
+  }, 12000);
+
   firebase.database().ref('app_data').on('value', snapshot=>{
+    firstDataReceived = true;
+    clearTimeout(firstLoadTimeoutTimer);
     cache = normalizeCache(snapshot.val());
     if(!cache.settings || !cache.settings.deleteBranchPassword){
       // أول مرة: نزرع كلمة السر الافتراضية فى فايربيز عشان تتخزن هناك بدل ما تكون مكتوبة فى كود الصفحة
@@ -360,11 +383,36 @@ function attachDataListener(){
     toast('تعذر الاتصال بقاعدة بيانات Firebase');
   });
 }
+
+/* مراقبة حالة الاتصال بفايربيز (مسار خاص .info/connected بيوفره فايربيز نفسه) —
+   بيوضح للمستخدم فورًا لو النت اتقطع أو رجع تاني، بدل ما الصفحة تفضل واقفة بصمت */
+let connectionWatcherAttached = false;
+let wasConnected = true;
+function watchConnectionState(){
+  if(connectionWatcherAttached) return;
+  connectionWatcherAttached = true;
+  firebase.database().ref('.info/connected').on('value', snap=>{
+    const connected = snap.val() === true;
+    if(!connected && wasConnected){
+      toast('⚠️ تم فقد الاتصال بالخادم — جارٍ محاولة إعادة الاتصال...');
+    } else if(connected && !wasConnected){
+      toast('✅ تم استعادة الاتصال بالخادم');
+    }
+    wasConnected = connected;
+  });
+}
 function detachDataListener(){
   if(!dataListenerAttached) return;
   dataListenerAttached = false;
   firebase.database().ref('app_data').off();
   cache = { branches: [], main: {}, shortage: {}, reports: {}, instashopReports: {}, settings: {} };
+  clearTimeout(firstLoadTimeoutTimer);
+  firstDataReceived = false;
+  if(connectionWatcherAttached){
+    connectionWatcherAttached = false;
+    wasConnected = true;
+    firebase.database().ref('.info/connected').off();
+  }
 }
 
 function firebaseWrite(path, value){
@@ -458,7 +506,11 @@ function showApp(user){
   document.getElementById('loginPassword').value = '';
   if(!appInitialized){
     appInitialized = true;
+    /* مؤشر تحميل فورى، عشان الشاشة متبانش فاضية وانت مستني اتصال فايربيز */
+    const list = document.getElementById('branches-list');
+    if(list) list.innerHTML = '<div class="empty"><b>جارٍ تحميل البيانات...</b>لو استمرت الشاشة فاضية لفترة طويلة، تأكد من اتصالك بالإنترنت</div>';
     attachDataListener(); // يحمّل البيانات من Firebase أول مرة، ثم يعيد الرسم تلقائيًا مع أي تحديث
+    watchConnectionState();
     setInterval(expireOldReports, 1000*60*30); // recheck every 30 min
   }
 }
@@ -723,6 +775,7 @@ async function handleUnifiedMainUpload(input){
           code: norm(r[0]),
           name: norm(r[1]),
           category: norm(r[3]),
+          relatedTo: norm(r[11]), /* عمود L: كود بديل/مرتبط بالصنف (Related to) */
           price: toNum(r[12]),
           qty: toNum(r[balCol])
         }));
@@ -784,6 +837,7 @@ async function handleMainUpload(branchId, input){
         code: norm(r[0]),
         name: norm(r[1]),
         category: norm(r[3]),
+        relatedTo: norm(r[11]), /* عمود L: كود بديل/مرتبط بالصنف (Related to) */
         price: toNum(r[12]),
         qty: toNum(r[15])
       }));
@@ -1705,7 +1759,7 @@ function runSearchChain(value){
     if(main && main.items.length){
       main.items.forEach(it=>{
         if(it.code.toLowerCase().includes(q) || (it.name||'').toLowerCase().includes(q)){
-          mainHits.push({branch:b.name, code:it.code, name:it.name, qty:it.qty});
+          mainHits.push({branch:b.name, code:it.code, name:it.name, qty:it.qty, relatedTo:it.relatedTo});
         }
       });
     }
@@ -1741,9 +1795,9 @@ function runSearchChain(value){
   el.innerHTML =
     renderChainSection(
       'متوفر فى الليستة اليومية',
-      ['الفرع','الكود','اسم الصنف','الرصيد'],
+      ['الفرع','الكود','اسم الصنف','الرصيد','Related to'],
       mainHits,
-      h=>`<tr><td>${escHtml(h.branch)}</td><td class="mono">${escHtml(h.code)}</td><td>${escHtml(h.name)}</td><td>${h.qty}</td></tr>`,
+      h=>`<tr><td>${escHtml(h.branch)}</td><td class="mono">${escHtml(h.code)}</td><td>${escHtml(h.name)}</td><td>${h.qty}</td><td class="mono">${h.relatedTo ? escHtml(h.relatedTo) : '—'}</td></tr>`,
       'الصنف غير موجود فى أي ليستة يومية'
     ) +
     renderChainSection(
