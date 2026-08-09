@@ -114,6 +114,8 @@
   .mini-preview.warn{color:var(--amber);}
   .code-search{width:100%; border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-family:'IBM Plex Mono',monospace; direction:ltr; text-align:right; font-size:12px; margin-top:8px;}
   .code-search:focus{outline:none; border-color:var(--accent);}
+  .chain-select{border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-family:inherit; font-size:12.5px; background:#fff; color:var(--ink); cursor:pointer;}
+  .chain-select:focus{outline:none; border-color:var(--accent);}
   .box .status{font-size:12px; margin-bottom:10px;}
   .box input[type=file]{font-size:12px; width:100%; margin-bottom:8px;}
   .row-check{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-soft); margin-bottom:10px;}
@@ -252,7 +254,12 @@
         <div class="hint">ابحث بالكود أو الاسم لمعرفة الصنف متوفر فى أنهى ليستة يومية، وأنهى ليستة نواقص، وأنهى ريبورت بعد حذف النواقص — فى كل الفروع دفعة واحدة</div>
       </div>
     </div>
-    <input class="code-search" id="chainSearchInput" placeholder="ابحث بالكود أو الاسم..." style="max-width:420px" oninput="runSearchChainDebounced(this.value)">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; max-width:640px;">
+      <input class="code-search" id="chainSearchInput" placeholder="ابحث بالكود أو الاسم..." style="max-width:420px; flex:1; min-width:200px; margin-top:0" oninput="runSearchChainDebounced(this.value)">
+      <select class="chain-select" id="chainBranchFilter" style="flex:1; min-width:160px" onchange="runSearchChain(document.getElementById('chainSearchInput').value)">
+        <option value="">كل الفروع</option>
+      </select>
+    </div>
     <div id="chain-results" style="margin-top:18px">
       <div class="empty"><b>ابدأ الكتابة للبحث</b>اكتب كود أو اسم الصنف لعرض تواجده فى كل الفروع</div>
     </div>
@@ -345,6 +352,7 @@ function attachDataListener(){
     }
     expireOldReports();
     renderBranches();
+    populateChainBranchFilter();
     const chainInput = document.getElementById('chainSearchInput');
     if(chainInput && chainInput.value) runSearchChain(chainInput.value);
   }, err=>{
@@ -1660,6 +1668,19 @@ function debounce(fn, delay){
   };
 }
 
+/* بناء/تحديث لستة الفروع فى فلتر Search Chain، مع الحفاظ على الفرع المختار حاليًا لو لسه موجود */
+function populateChainBranchFilter(){
+  const sel = document.getElementById('chainBranchFilter');
+  if(!sel) return;
+  const current = sel.value;
+  const branches = getBranches();
+  sel.innerHTML = '<option value="">كل الفروع</option>' +
+    branches.map(b => `<option value="${escAttr(b.id)}">${escHtml(b.name)}</option>`).join('');
+  if(current && branches.some(b => b.id === current)){
+    sel.value = current;
+  }
+}
+
 function runSearchChain(value){
   const el = document.getElementById('chain-results');
   if(!el) return;
@@ -1669,7 +1690,10 @@ function runSearchChain(value){
     return;
   }
 
-  const branches = getBranches();
+  const filterEl = document.getElementById('chainBranchFilter');
+  const branchFilterId = filterEl ? filterEl.value : '';
+  const allBranches = getBranches();
+  const branches = branchFilterId ? allBranches.filter(b => b.id === branchFilterId) : allBranches;
   const mainHits = [], shortageHits = [], reportHits = [], instashopHits = [];
 
   branches.forEach(b=>{
