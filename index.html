@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="firebase-config.js"></script>
 <style>
   :root{
     --ink:#1c2321;
@@ -140,9 +143,38 @@
   }
   .toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
   .section-title{font-size:12px; font-weight:800; color:var(--ink-soft); margin:22px 0 10px; letter-spacing:.3px;}
+
+  .login-screen{position:fixed; inset:0; background:var(--paper); display:flex; align-items:center; justify-content:center; z-index:200; padding:20px;}
+  .login-screen.hidden{display:none;}
+  .login-box{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:34px 28px; width:100%; max-width:340px; text-align:center;}
+  .login-mark{width:46px;height:46px;border-radius:11px;background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:20px; margin:0 auto 14px;}
+  .login-box h2{margin:0 0 4px; font-size:18px;}
+  .login-sub{margin:0 0 22px; font-size:12.5px; color:var(--ink-soft);}
+  .login-box input{width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13.5px; margin-bottom:12px; text-align:right;}
+  .login-box input:focus{outline:none; border-color:var(--accent);}
+  .login-error{color:var(--red); font-size:12.5px; min-height:16px; margin-bottom:8px;}
+  .login-box .btn{margin-top:4px;}
+  .user-chip{display:flex; align-items:center; gap:10px;}
+  .user-chip span{font-size:12px; color:var(--ink-soft);}
+  .btn-logout{background:var(--red-dim); color:var(--red);}
+  .btn-logout:hover{background:#f6d9d5;}
 </style>
 </head>
 <body>
+
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <div class="login-mark">ف</div>
+    <h2>تسجيل الدخول</h2>
+    <p class="login-sub">نظام إدارة مخزون الفروع</p>
+    <input type="email" id="loginEmail" placeholder="البريد الإلكتروني" autocomplete="username">
+    <input type="password" id="loginPassword" placeholder="كلمة المرور" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <div class="login-error" id="loginError"></div>
+    <button class="btn btn-accent" style="width:100%" onclick="doLogin()">دخول</button>
+  </div>
+</div>
+
+<div id="appRoot" style="display:none">
 
 <header class="top">
   <div class="brand">
@@ -156,6 +188,10 @@
     <button class="active" data-view="branches">الفروع</button>
     <button data-view="reports">الريبورتات</button>
   </nav>
+  <div class="user-chip">
+    <span id="userEmailLabel"></span>
+    <button class="btn btn-sm btn-logout" onclick="doLogout()">تسجيل الخروج</button>
+  </div>
 </header>
 
 <main>
@@ -199,6 +235,8 @@
 
 <div class="toast" id="toast"></div>
 
+</div><!-- /appRoot -->
+
 <script>
 /* ===================== STORAGE HELPERS ===================== */
 const LS = {
@@ -233,6 +271,58 @@ function expireOldReports(){
     }
   });
 }
+
+/* ===================== AUTH (Firebase) ===================== */
+let appInitialized = false;
+
+function showApp(user){
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('appRoot').style.display = '';
+  document.getElementById('userEmailLabel').textContent = user.email || '';
+  document.getElementById('loginError').textContent = '';
+  document.getElementById('loginPassword').value = '';
+  if(!appInitialized){
+    appInitialized = true;
+    expireOldReports();
+    renderBranches();
+    setInterval(expireOldReports, 1000*60*30); // recheck every 30 min
+  }
+}
+
+function showLogin(){
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('appRoot').style.display = 'none';
+}
+
+function doLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if(!email || !password){ errEl.textContent = 'من فضلك أدخل البريد الإلكتروني وكلمة المرور'; return; }
+  firebase.auth().signInWithEmailAndPassword(email, password)
+    .catch(err=>{
+      console.error(err);
+      if(err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found'){
+        errEl.textContent = 'البريد الإلكتروني أو كلمة المرور غير صحيحة';
+      } else if(err.code === 'auth/invalid-email'){
+        errEl.textContent = 'صيغة البريد الإلكتروني غير صحيحة';
+      } else if(err.code === 'auth/too-many-requests'){
+        errEl.textContent = 'محاولات كثيرة جدًا، حاول بعد قليل';
+      } else {
+        errEl.textContent = 'تعذر تسجيل الدخول، تأكد من إعدادات Firebase (راجع firebase-config.js)';
+      }
+    });
+}
+
+function doLogout(){
+  if(!confirm('هل تريد تسجيل الخروج؟')) return;
+  firebase.auth().signOut();
+}
+
+firebase.auth().onAuthStateChanged(user=>{
+  if(user){ showApp(user); } else { showLogin(); }
+});
 
 /* ===================== TOAST ===================== */
 let toastTimer;
@@ -384,16 +474,18 @@ function generateReports(branchId){
   shortage.items.forEach(s=>{ if(s.code) shortMap[s.code] = (shortMap[s.code]||0) + toNum(s.qty); });
 
   let matched = 0;
-  const processed = main.items.map(it=>{
-    const deduct = shortMap[it.code] || 0;
-    if(deduct) matched++;
-    const balance = Math.max(0, it.qty - deduct);
-    return {code: it.code, name: it.name, price: it.price, balance};
-  });
+  const processed = main.items
+    .map(it=>{
+      const deduct = shortMap[it.code] || 0;
+      if(deduct) matched++;
+      const rawBalance = it.qty - deduct;
+      return {code: it.code, name: it.name, price: it.price, balance: Math.floor(rawBalance)};
+    })
+    .filter(it => it.balance >= 1); // نشيل أي صنف رصيده أقل من 1، والكسور تتقرب للرقم الأقل
 
   saveReports(branchId, {generatedAt: now(), items: processed, matchedCount: matched});
   renderBranches(branchId);
-  toast('تم إنشاء الريبورتات — تم خصم النواقص من '+matched+' صنف');
+  toast('تم إنشاء الريبورتات — تم خصم النواقص من '+matched+' صنف، واستبعاد الأصناف الأقل من 1');
 }
 
 /* ===================== EXPORT XLSX ===================== */
@@ -558,9 +650,7 @@ function escHtml(s){ return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;'
 function escAttr(s){ return escHtml(s); }
 
 /* ===================== INIT ===================== */
-expireOldReports();
-renderBranches();
-setInterval(expireOldReports, 1000*60*30); // recheck every 30 min
+/* بدء التطبيق يتم الآن من خلال showApp() بعد تأكيد تسجيل الدخول عبر Firebase */
 </script>
 </body>
 </html>
