@@ -212,6 +212,15 @@
       </div>
       <button class="btn btn-accent" onclick="openAddBranch()">+ إضافة فرع</button>
     </div>
+
+    <div class="box" style="margin-bottom:20px">
+      <h4>رفع الليستة اليومية الموحدة (شيت واحد لكل الفروع)</h4>
+      <div class="sub">شيت واحد يحتوى على كل الفروع معًا: عمود A كود الصنف، عمود B اسم الصنف، عمود M سعر الصنف، ورصيد كل فرع فى عموده الخاص به. يتم توزيع البيانات تلقائيًا على كل فرع حسب عمود رصيده.</div>
+      <div class="row-check"><input type="checkbox" id="unifiedMainHeader" checked> <label for="unifiedMainHeader">الصف الأول عناوين</label></div>
+      <input type="file" accept=".xlsx,.xls,.csv" onchange="handleUnifiedMainUpload(this)">
+      <div class="status" id="unifiedMainStatus"></div>
+    </div>
+
     <div id="branches-list"></div>
   </div>
 
@@ -521,6 +530,68 @@ function readWorkbookRows(file){
     reader.onerror = reject;
     reader.readAsArrayBuffer(file);
   });
+}
+
+/* يحوّل حرف عمود الإكسيل (A, B, ... Z, AA, AB ... BT) لرقم عمود (0-based) */
+function colToIndex(letters){
+  letters = String(letters).trim().toUpperCase();
+  let idx = 0;
+  for(let i=0;i<letters.length;i++){
+    idx = idx*26 + (letters.charCodeAt(i) - 64);
+  }
+  return idx - 1;
+}
+
+/* خريطة: اسم الفرع (كما هو مكتوب فى النظام، بحروف صغيرة) => عمود رصيده فى الشيت الموحد */
+const BRANCH_BALANCE_COLUMN = {
+  'dar elyosr': 'BT',
+  'watanya': 'BR',
+  'awl gamal': 'AD',
+  'midtown': 'AH',
+  'abaasya': 'X',
+  'j. tito': 'BP'
+};
+
+/* رفع شيت واحد موحد لكل الفروع: A=كود الصنف، B=اسم الصنف، M=سعر الصنف، ورصيد كل فرع فى عموده الخاص */
+async function handleUnifiedMainUpload(input){
+  const file = input.files[0];
+  if(!file) return;
+  const hasHeader = document.getElementById('unifiedMainHeader').checked;
+  const statusEl = document.getElementById('unifiedMainStatus');
+  try{
+    const rows = await readWorkbookRows(file);
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+
+    const branches = getBranches();
+    const matched = [], unmatched = [];
+
+    branches.forEach(b=>{
+      const key = norm(b.name).toLowerCase();
+      const colLetter = BRANCH_BALANCE_COLUMN[key];
+      if(!colLetter){ unmatched.push(b.name); return; }
+      const balCol = colToIndex(colLetter);
+      const items = dataRows
+        .filter(r => norm(r[0]) !== '')
+        .map(r => ({
+          code: norm(r[0]),
+          name: norm(r[1]),
+          price: toNum(r[12]),
+          qty: toNum(r[balCol])
+        }));
+      saveMain(b.id, {uploadedAt: now(), fileName: file.name, items});
+      matched.push(b.name);
+    });
+
+    renderBranches();
+    if(statusEl) statusEl.innerHTML = `آخر رفع: ${fmtDate(now())} — تم تحديث ${matched.length} فرع`;
+    let msg = 'تم رفع الليستة الموحدة: تحديث '+matched.length+' فرع';
+    if(unmatched.length) msg += ' — بدون عمود رصيد محدد: '+unmatched.join('، ');
+    toast(msg);
+  }catch(err){
+    console.error(err);
+    toast('حدث خطأ أثناء قراءة الملف');
+  }
+  input.value='';
 }
 
 /* Column indices: A=0,B=1,C=2 ... M=12, P=15 */
@@ -964,7 +1035,7 @@ function renderBranchCard(b){
 
         <div class="box">
           <h4>الليستة اليومية (الأرصدة)</h4>
-          <div class="sub">أعمدة: A كود الصنف · B اسم الصنف · M سعر الصنف · P كمية الصنف</div>
+          <div class="sub">تُحدَّث تلقائيًا من الرفع الموحد أعلى الصفحة. ويمكنك هنا رفع ملف لهذا الفرع بمفرده يدويًا عند الحاجة (A كود الصنف · B اسم الصنف · M سعر الصنف · P كمية الصنف).</div>
           <div class="row-check"><input type="checkbox" id="mainHeader-${b.id}" checked> <label for="mainHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleMainUpload('${b.id}', this)">
           <div class="status">
