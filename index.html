@@ -297,8 +297,6 @@ function showLogin(){
 }
 
 function doLogin() {
-  showApp(currentUser);
-initApp();
   const username = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
@@ -335,25 +333,34 @@ initApp();
         ...userData
       };
 
-      console.log('تم تسجيل الدخول:', currentUser);
+      console.log('✅ تم تسجيل الدخول:', currentUser);
 
+      // إخفاء شاشة تسجيل الدخول
       const loginScreen = document.getElementById('loginScreen');
 
       if (loginScreen) {
-        loginScreen.classList.add('hidden');
         loginScreen.style.display = 'none';
       }
 
+      // إظهار التطبيق
       const appRoot = document.getElementById('appRoot');
 
       if (appRoot) {
-        appRoot.style.display = '';
+        appRoot.style.display = 'block';
       } else {
-        console.error('appRoot غير موجود في الصفحة');
+        console.error('❌ appRoot غير موجود');
         return;
       }
 
-      try {
+      // تشغيل التطبيق
+      initApp();
+
+    })
+    .catch(err => {
+      console.error('❌ Login error:', err);
+      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
+    });
+}
       function initApp() {
   console.log("🚀 initApp started");
 
