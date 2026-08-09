@@ -193,6 +193,7 @@
   <nav class="tabs">
     <button class="active" data-view="branches">الفروع</button>
     <button data-view="reports">الريبورتات</button>
+    <button data-view="searchchain">Search Chain</button>
   </nav>
   <div class="user-chip">
     <span id="userEmailLabel"></span>
@@ -223,6 +224,20 @@
       </div>
     </div>
     <div id="reports-list"></div>
+  </div>
+
+  <!-- ===== SEARCH CHAIN VIEW ===== -->
+  <div class="view" id="view-searchchain">
+    <div class="toolbar">
+      <div>
+        <h2>Search Chain</h2>
+        <div class="hint">ابحث بالكود أو الاسم لمعرفة الصنف متوفر فى أنهى ليستة يومية، وأنهى ليستة نواقص، وأنهى ريبورت بعد حذف النواقص — فى كل الفروع دفعة واحدة</div>
+      </div>
+    </div>
+    <input class="code-search" id="chainSearchInput" placeholder="ابحث بالكود أو الاسم..." style="max-width:420px" oninput="runSearchChain(this.value)">
+    <div id="chain-results" style="margin-top:18px">
+      <div class="empty"><b>ابدأ الكتابة للبحث</b>اكتب كود أو اسم الصنف لعرض تواجده فى كل الفروع</div>
+    </div>
   </div>
 
 </main>
@@ -380,6 +395,10 @@ document.querySelectorAll('nav.tabs button').forEach(btn=>{
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById('view-'+btn.dataset.view).classList.add('active');
     if(btn.dataset.view==='reports') renderReports();
+    if(btn.dataset.view==='searchchain'){
+      const inp = document.getElementById('chainSearchInput');
+      if(inp) inp.focus();
+    }
   });
 });
 
@@ -959,6 +978,89 @@ function renderReports(){
       </div>
     </div>`;
   }).join('');
+}
+
+/* ===================== SEARCH CHAIN (بحث شامل فى كل الفروع) ===================== */
+function renderChainSection(title, headers, hits, rowFn, emptyMsg){
+  return `
+  <div class="box" style="margin-bottom:16px">
+    <h4>${title} ${hits.length ? `<span class="badge badge-ok">${hits.length}</span>` : `<span class="badge badge-off">0</span>`}</h4>
+    ${hits.length ? `
+    <div class="table-wrap" style="max-height:260px">
+      <table class="rep-table">
+        <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${hits.map(rowFn).join('')}</tbody>
+      </table>
+    </div>` : `<div class="sub" style="margin:0">${emptyMsg}</div>`}
+  </div>`;
+}
+
+function runSearchChain(value){
+  const el = document.getElementById('chain-results');
+  if(!el) return;
+  const q = norm(value).toLowerCase();
+  if(!q){
+    el.innerHTML = '<div class="empty"><b>ابدأ الكتابة للبحث</b>اكتب كود أو اسم الصنف لعرض تواجده فى كل الفروع</div>';
+    return;
+  }
+
+  const branches = getBranches();
+  const mainHits = [], shortageHits = [], reportHits = [];
+
+  branches.forEach(b=>{
+    const main = getMain(b.id);
+    const shortage = getShortage(b.id);
+    const reports = getReports(b.id);
+
+    if(main && main.items.length){
+      main.items.forEach(it=>{
+        if(it.code.toLowerCase().includes(q) || (it.name||'').toLowerCase().includes(q)){
+          mainHits.push({branch:b.name, code:it.code, name:it.name, qty:it.qty});
+        }
+      });
+    }
+
+    if(shortage && shortage.items.length){
+      shortage.items.forEach(it=>{
+        const foundMain = main && main.items.find(m=>m.code===it.code);
+        const resolvedName = foundMain ? (foundMain.name||'') : '';
+        if((it.code||'').toLowerCase().includes(q) || resolvedName.toLowerCase().includes(q)){
+          shortageHits.push({branch:b.name, code:it.code, name:resolvedName});
+        }
+      });
+    }
+
+    if(reports && reports.items.length){
+      reports.items.forEach(it=>{
+        if(it.code.toLowerCase().includes(q) || (it.name||'').toLowerCase().includes(q)){
+          reportHits.push({branch:b.name, code:it.code, name:it.name, price:it.price, balance:it.balance});
+        }
+      });
+    }
+  });
+
+  el.innerHTML =
+    renderChainSection(
+      'متوفر فى الليستة اليومية',
+      ['الفرع','الكود','اسم الصنف','الرصيد'],
+      mainHits,
+      h=>`<tr><td>${escHtml(h.branch)}</td><td class="mono">${escHtml(h.code)}</td><td>${escHtml(h.name)}</td><td>${h.qty}</td></tr>`,
+      'الصنف غير موجود فى أي ليستة يومية'
+    ) +
+    renderChainSection(
+      'موجود فى ليستة النواقص',
+      ['الفرع','الكود','اسم الصنف'],
+      shortageHits,
+      h=>`<tr><td>${escHtml(h.branch)}</td><td class="mono">${escHtml(h.code)}</td><td>${escHtml(h.name)||'—'}</td></tr>`,
+      'الصنف غير موجود فى أي ليستة نواقص'
+    ) +
+    renderChainSection(
+      'موجود فى الريبورت بعد حذف النواقص',
+      ['الفرع','الكود','اسم الصنف','السعر','الرصيد'],
+      reportHits,
+      h=>`<tr><td>${escHtml(h.branch)}</td><td class="mono">${escHtml(h.code)}</td><td>${escHtml(h.name)}</td><td>${h.price}</td><td>${h.balance}</td></tr>`,
+      'الصنف غير موجود فى أي ريبورت (لم يُنشأ ريبورت، أو تم حذفه ضمن النواقص)'
+    );
 }
 
 /* ===================== ESCAPE HELPERS ===================== */
