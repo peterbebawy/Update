@@ -552,8 +552,9 @@ function codePreviewHtml(main, code){
   const c = norm(code);
   if(!c) return {html:'', cls:''};
   const found = main && main.items.find(it => it.code === c);
-  if(found) return {html: '✓ ' + escHtml(found.name || '(بدون اسم)') + ' — رصيد: ' + found.qty, cls:'ok'};
-  return {html: '⚠ الكود غير موجود فى الليستة اليومية', cls:'warn'};
+  if(!found) return {html: '⚠ الكود غير موجود فى الليستة اليومية', cls:'warn'};
+  if(found.qty <= 0) return {html: '⚠ ' + escHtml(found.name || '(بدون اسم)') + ' — بدون رصيد (0)', cls:'warn'};
+  return {html: '✓ ' + escHtml(found.name || '(بدون اسم)') + ' — رصيد: ' + found.qty, cls:'ok'};
 }
 
 /* معاينة حية لاسم الصنف أثناء كتابة الكود فى ليستة النواقص */
@@ -567,7 +568,7 @@ function previewShortageCode(branchId, idx, value){
   el.className = 'mini-preview ' + p.cls;
 }
 
-/* بحث بالكود داخل الليستة اليومية للفرع */
+/* بحث بالكود أو الاسم داخل الليستة اليومية للفرع */
 function searchMainCode(branchId, value){
   const el = document.getElementById('main-search-result-'+branchId);
   if(!el) return;
@@ -578,15 +579,29 @@ function searchMainCode(branchId, value){
     el.innerHTML = '<div class="mini-preview warn">لا توجد ليستة يومية مرفوعة لهذا الفرع</div>';
     return;
   }
-  const matches = main.items.filter(it => it.code.toLowerCase().includes(q)).slice(0, 8);
+  const matches = main.items.filter(it =>
+    it.code.toLowerCase().includes(q) || (it.name||'').toLowerCase().includes(q)
+  ).slice(0, 8);
   if(!matches.length){
-    el.innerHTML = '<div class="mini-preview warn">⚠ لا يوجد صنف بهذا الكود</div>';
+    el.innerHTML = '<div class="mini-preview warn">⚠ لا يوجد صنف بهذا الكود أو الاسم</div>';
     return;
   }
   el.innerHTML = matches.map(it =>
     `<div class="mini-preview ok mono">✓ ${escHtml(it.code)} — ${escHtml(it.name || '(بدون اسم)')} (رصيد: ${it.qty})</div>`
   ).join('');
 }
+
+/* بحث بالكود أو الاسم داخل جدول ليستة النواقص (فلترة الصفوف المعروضة) */
+function filterShortageTable(branchId, value){
+  const q = norm(value).toLowerCase();
+  document.querySelectorAll('#short-table-'+branchId+' tbody tr').forEach(tr=>{
+    if(!q){ tr.style.display=''; return; }
+    const code = (tr.dataset.code||'');
+    const name = (tr.dataset.name||'');
+    tr.style.display = (code.includes(q) || name.includes(q)) ? '' : 'none';
+  });
+}
+
 
 /* ===================== GENERATE REPORTS ===================== */
 function generateReports(branchId){
@@ -628,6 +643,22 @@ function talabatFileName(branchId){
   return mapped || name;
 }
 
+/* أسماء الفروع الثابتة لملف Instashop / Vezeeta */
+const INSTASHOP_NAME_MAP = {
+  'dar elyosr': 'obour',
+  'awl galam': 'gamal',
+  'awl gamal': 'gamal',
+  'midtown': 'midtown',
+  'j. tito': 'nozha',
+  'watanya': 'watanya',
+  'abaasya': 'abaasya'
+};
+function instashopFileName(branchId){
+  const name = branchName(branchId);
+  const mapped = INSTASHOP_NAME_MAP[name.trim().toLowerCase()];
+  return mapped || name;
+}
+
 /* Excel لا يسمح بهذه الرموز في اسم الشيت: \ / ? * [ ] : */
 function safeSheetName(name){
   return String(name).replace(/[\\/?*\[\]:]/g,'-').slice(0,31);
@@ -641,7 +672,7 @@ function downloadInstashop(branchId){
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{wch:14},{wch:34},{wch:12},{wch:10}];
   const wb = XLSX.utils.book_new();
-  const name = branchName(branchId);
+  const name = instashopFileName(branchId);
   XLSX.utils.book_append_sheet(wb, ws, safeSheetName(name));
   XLSX.writeFile(wb, name+'.xlsx');
 }
@@ -698,8 +729,10 @@ function renderBranchCard(b){
 
   const shortRows = shortage.items.map((it, idx) => {
     const preview = codePreviewHtml(main, it.code);
+    const foundItem = main && main.items.find(m => m.code === it.code);
+    const resolvedName = foundItem ? foundItem.name : '';
     return `
-    <tr>
+    <tr data-code="${escAttr((it.code||'').toLowerCase())}" data-name="${escAttr((resolvedName||'').toLowerCase())}">
       <td style="width:6%"><input type="checkbox" class="short-check" data-branch="${b.id}" data-idx="${idx}"></td>
       <td>
         <input class="cell-input mono" value="${escAttr(it.code)}" oninput="previewShortageCode('${b.id}',${idx},this.value)" onchange="updateShortageCell('${b.id}',${idx},'code',this.value)">
@@ -708,6 +741,14 @@ function renderBranchCard(b){
       <td><span class="del-x" onclick="removeShortageRow('${b.id}',${idx})">×</span></td>
     </tr>`;
   }).join('');
+
+  const noBalanceCodes = shortage.items
+    .map(it => it.code)
+    .filter(Boolean)
+    .filter(code => {
+      const found = main && main.items.find(m => m.code === code);
+      return !found || found.qty <= 0;
+    });
 
   return `
   <div class="branch-card">
@@ -739,19 +780,21 @@ function renderBranchCard(b){
           <div class="row-check"><input type="checkbox" id="shortHeader-${b.id}" checked> <label for="shortHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleShortageUpload('${b.id}', this)">
           <div class="status">${shortage.items.length ? `آخر تحديث: ${fmtDate(shortage.updatedAt)} — ${shortage.items.length} صنف` : 'لا توجد ليستة نواقص'}</div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          ${noBalanceCodes.length ? `<div class="expiry-note" style="margin-top:6px">⚠ ${noBalanceCodes.length} كود بدون رصيد فى الليستة اليومية: ${noBalanceCodes.map(c=>escHtml(c)).join('، ')}</div>` : ''}
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
             <button class="btn btn-ghost btn-sm" onclick="addShortageRow('${b.id}')">+ إضافة صنف واحد</button>
             <button class="btn btn-ghost btn-sm" onclick="openBulkAddShortage('${b.id}')">+ إضافة أصناف بالجملة</button>
           </div>
           ${shortage.items.length ? `
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; gap:8px;">
+          <input class="code-search" style="margin-top:10px" placeholder="ابحث بالكود أو الاسم..." oninput="filterShortageTable('${b.id}', this.value)">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px; gap:8px;">
             <label style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--ink-soft);">
               <input type="checkbox" onchange="toggleSelectAllShortage('${b.id}', this.checked)"> تحديد الكل
             </label>
             <button class="btn btn-danger btn-sm" onclick="deleteSelectedShortage('${b.id}')">حذف المحدد</button>
           </div>
           <div class="table-wrap">
-            <table class="data">
+            <table class="data" id="short-table-${b.id}">
               <thead><tr><th style="width:6%"></th><th style="width:79%">الكود</th><th style="width:8%"></th></tr></thead>
               <tbody>${shortRows}</tbody>
             </table>
