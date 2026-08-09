@@ -296,23 +296,20 @@ function showLogin(){
   document.getElementById('appRoot').style.display = 'none';
 }
 
-function doLogin() {
+function doLogin(){
   const username = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
-
   errEl.textContent = '';
 
-  if (!username || !password) {
+  if(!username || !password){
     errEl.textContent = 'من فضلك أدخل اسم المستخدم وكلمة المرور';
     return;
   }
 
   firebase.database().ref('users').once('value')
     .then(snapshot => {
-
       const users = snapshot.val() || {};
-
       const found = Object.entries(users).find(([id, user]) =>
         user &&
         user.name &&
@@ -321,76 +318,22 @@ function doLogin() {
         String(user.pass) === String(password)
       );
 
-      if (!found) {
+      if(!found){
         errEl.textContent = 'اسم المستخدم أو كلمة المرور غير صحيحة';
         return;
       }
 
       const [userId, userData] = found;
-
-      currentUser = {
-        id: userId,
-        ...userData
-      };
-
-      console.log('✅ تم تسجيل الدخول:', currentUser);
-
-      // إخفاء شاشة تسجيل الدخول
-      const loginScreen = document.getElementById('loginScreen');
-
-      if (loginScreen) {
-        loginScreen.style.display = 'none';
-      }
-
-      // إظهار التطبيق
-      const appRoot = document.getElementById('appRoot');
-
-      if (appRoot) {
-        appRoot.style.display = 'block';
-      } else {
-        console.error('❌ appRoot غير موجود');
-        return;
-      }
-
-      // تشغيل التطبيق
-      initApp();
-
+      currentUser = { id: userId, ...userData };
+      LS.set('ibs_current_user', currentUser);
+      showApp(currentUser);
     })
     .catch(err => {
-      console.error('❌ Login error:', err);
-      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول';
+      console.error('Login error:', err);
+      errEl.textContent = 'حدث خطأ أثناء تسجيل الدخول، تأكد من الاتصال بالإنترنت وحاول مرة أخرى';
     });
 }
-   function initApp() {
-  console.log("🚀 initApp started");
 
-  firebase.database().ref("users").once("value")
-    .then(snapshot => {
-
-      usersData = [];
-
-      snapshot.forEach(child => {
-        usersData.push({
-          id: child.key,
-          ...child.val()
-        });
-      });
-
-      console.log("👥 users:", usersData);
-
-      // عرض المحتوى مباشرة بعد تسجيل الدخول
-      if (typeof renderBranches === "function") {
-        console.log("📂 جاري عرض الفروع...");
-        renderBranches();
-      } else {
-        console.error("❌ renderBranches غير موجودة");
-      }
-
-    })
-    .catch(err => {
-      console.error("❌ Users:", err);
-    });
-}
 function doLogout(){
   if(!confirm('هل تريد تسجيل الخروج؟')) return;
   currentUser = null;
@@ -566,6 +509,26 @@ function generateReports(branchId){
 /* ===================== EXPORT XLSX ===================== */
 function branchName(id){ const b = getBranches().find(x=>x.id===id); return b ? b.name : 'فرع'; }
 
+/* أسماء ملفات طلبات Talabat الثابتة لكل فرع (كود الفرع كما هو متفق عليه) */
+const TALABAT_CODE_MAP = {
+  'dar elyosr': 'dar elyosr_761230',
+  'watanya': 'watanya_764155',
+  'j. tito': 'j. tito_761461',
+  'awl galam': 'Awl gamal_1111859',
+  'midtown': 'midtown_761462',
+  'abaasya': 'Abaasya_796706'
+};
+function talabatFileName(branchId){
+  const name = branchName(branchId);
+  const mapped = TALABAT_CODE_MAP[name.trim().toLowerCase()];
+  return mapped || name;
+}
+
+/* Excel لا يسمح بهذه الرموز في اسم الشيت: \ / ? * [ ] : */
+function safeSheetName(name){
+  return String(name).replace(/[\\/?*\[\]:]/g,'-').slice(0,31);
+}
+
 function downloadInstashop(branchId){
   const r = getReports(branchId);
   if(!r){ toast('أنشئ الريبورتات أولاً'); return; }
@@ -574,8 +537,9 @@ function downloadInstashop(branchId){
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{wch:14},{wch:34},{wch:12},{wch:10}];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Instashop-Vezeeta');
-  XLSX.writeFile(wb, branchName(branchId)+' - Instashop-Vezeeta.xlsx');
+  const name = branchName(branchId);
+  XLSX.utils.book_append_sheet(wb, ws, safeSheetName(name));
+  XLSX.writeFile(wb, name+'.xlsx');
 }
 
 function downloadTalabat(branchId){
@@ -587,7 +551,7 @@ function downloadTalabat(branchId){
   ws['!cols'] = [{wch:14},{wch:12},{wch:10},{wch:10},{wch:6},{wch:22}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Talabat');
-  XLSX.writeFile(wb, branchName(branchId)+' - Talabat.xlsx');
+  XLSX.writeFile(wb, talabatFileName(branchId)+'.xlsx');
 }
 
 /* ===================== RENDER BRANCHES ===================== */
