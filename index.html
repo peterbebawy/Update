@@ -297,6 +297,8 @@ function showLogin(){
 }
 
 function doLogin() {
+  showApp(currentUser);
+initApp();
   const username = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
