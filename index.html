@@ -310,7 +310,7 @@ const now = () => Date.now();
 const TWO_DAYS = 1000*60*60*24*2;
 
 /* نسخة محلية (كاش) من بيانات فايربيز، تتحدث تلقائيًا لحظة أي تغيير عن طريق on('value') */
-let cache = { branches: [], main: {}, shortage: {}, reports: {} };
+let cache = { branches: [], main: {}, shortage: {}, reports: {}, settings: {} };
 let dataListenerAttached = false;
 
 function normalizeCache(v){
@@ -319,7 +319,8 @@ function normalizeCache(v){
     branches: Array.isArray(val.branches) ? val.branches : (val.branches ? Object.values(val.branches) : []),
     main: val.main || {},
     shortage: val.shortage || {},
-    reports: val.reports || {}
+    reports: val.reports || {},
+    settings: val.settings || {}
   };
 }
 
@@ -328,6 +329,10 @@ function attachDataListener(){
   dataListenerAttached = true;
   firebase.database().ref('app_data').on('value', snapshot=>{
     cache = normalizeCache(snapshot.val());
+    if(!cache.settings || !cache.settings.deleteBranchPassword){
+      // أول مرة: نزرع كلمة السر الافتراضية فى فايربيز عشان تتخزن هناك بدل ما تكون مكتوبة فى كود الصفحة
+      firebaseWrite('app_data/settings/deleteBranchPassword', DELETE_BRANCH_PASSWORD_DEFAULT);
+    }
     expireOldReports();
     renderBranches();
     const reportsView = document.getElementById('view-reports');
@@ -343,7 +348,7 @@ function detachDataListener(){
   if(!dataListenerAttached) return;
   dataListenerAttached = false;
   firebase.database().ref('app_data').off();
-  cache = { branches: [], main: {}, shortage: {}, reports: {} };
+  cache = { branches: [], main: {}, shortage: {}, reports: {}, settings: {} };
 }
 
 function firebaseWrite(path, value){
@@ -530,9 +535,16 @@ function confirmAddBranch(){
   renderBranches();
   toast('تم إضافة الفرع: '+name);
 }
+/* كلمة سر حذف الفرع مخزّنة فى فايربيز تحت app_data/settings/deleteBranchPassword
+   (مش مكتوبة نهائيًا فى كود الصفحة) — القيمة الافتراضية أول مرة فقط، وبعدها بتتقرأ من فايربيز */
+const DELETE_BRANCH_PASSWORD_DEFAULT = '526933';
 function deleteBranch(id){
   const b = getBranches().find(x=>x.id===id);
   if(!confirm('حذف فرع "'+(b?b.name:'')+'" نهائيًا مع كل بياناته (الليستة اليومية، النواقص، الريبورتات)؟')) return;
+  const pass = prompt('أدخل كلمة السر لتأكيد حذف الفرع:');
+  if(pass === null) return; // المستخدم لغى
+  const correctPass = (cache.settings && cache.settings.deleteBranchPassword) || DELETE_BRANCH_PASSWORD_DEFAULT;
+  if(String(pass) !== String(correctPass)){ toast('كلمة السر غير صحيحة — تم إلغاء الحذف'); return; }
   saveBranches(getBranches().filter(x=>x.id!==id));
   delete cache.main[id]; firebaseRemove('app_data/main/'+id);
   delete cache.shortage[id]; firebaseRemove('app_data/shortage/'+id);
