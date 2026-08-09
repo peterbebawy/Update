@@ -273,6 +273,9 @@
 
 <script>
 /* ===================== STORAGE HELPERS ===================== */
+/* بيانات الجلسة (المستخدم الحالي) فقط تُحفظ محليًا. بيانات الفروع/الليستات/النواقص/الريبورتات
+   بقت تتخزن وتتزامن مباشرة مع Firebase Realtime Database تحت المسار app_data، بحيث أي تعديل
+   يظهر فورًا فى فايربيز ويوصل لأي جهاز/متصفح تاني مسجل دخول بنفس القاعدة. */
 const LS = {
   get(k, fallback){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){ console.error(e); } },
@@ -282,15 +285,65 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7
 const now = () => Date.now();
 const TWO_DAYS = 1000*60*60*24*2;
 
-function getBranches(){ return LS.get('ibs_branches', []); }
-function saveBranches(b){ LS.set('ibs_branches', b); }
-function getMain(id){ return LS.get('ibs_main_'+id, null); }
-function saveMain(id, d){ LS.set('ibs_main_'+id, d); }
-function getShortage(id){ return LS.get('ibs_shortage_'+id, {updatedAt:null, items:[]}); }
-function saveShortage(id, d){ LS.set('ibs_shortage_'+id, d); }
-function getReports(id){ return LS.get('ibs_reports_'+id, null); }
-function saveReports(id, d){ LS.set('ibs_reports_'+id, d); }
-function clearReports(id){ LS.del('ibs_reports_'+id); }
+/* نسخة محلية (كاش) من بيانات فايربيز، تتحدث تلقائيًا لحظة أي تغيير عن طريق on('value') */
+let cache = { branches: [], main: {}, shortage: {}, reports: {} };
+let dataListenerAttached = false;
+
+function normalizeCache(v){
+  const val = v || {};
+  return {
+    branches: Array.isArray(val.branches) ? val.branches : (val.branches ? Object.values(val.branches) : []),
+    main: val.main || {},
+    shortage: val.shortage || {},
+    reports: val.reports || {}
+  };
+}
+
+function attachDataListener(){
+  if(dataListenerAttached) return;
+  dataListenerAttached = true;
+  firebase.database().ref('app_data').on('value', snapshot=>{
+    cache = normalizeCache(snapshot.val());
+    expireOldReports();
+    renderBranches();
+    const reportsView = document.getElementById('view-reports');
+    if(reportsView && reportsView.classList.contains('active')) renderReports();
+    const chainInput = document.getElementById('chainSearchInput');
+    if(chainInput && chainInput.value) runSearchChain(chainInput.value);
+  }, err=>{
+    console.error('Firebase sync error:', err);
+    toast('تعذر الاتصال بقاعدة بيانات Firebase');
+  });
+}
+function detachDataListener(){
+  if(!dataListenerAttached) return;
+  dataListenerAttached = false;
+  firebase.database().ref('app_data').off();
+  cache = { branches: [], main: {}, shortage: {}, reports: {} };
+}
+
+function firebaseWrite(path, value){
+  firebase.database().ref(path).set(value).catch(err=>{
+    console.error('Firebase write error:', path, err);
+    toast('حدث خطأ أثناء الحفظ فى Firebase — تأكد من الاتصال بالإنترنت');
+  });
+}
+function firebaseRemove(path){
+  firebase.database().ref(path).remove().catch(err=>{
+    console.error('Firebase remove error:', path, err);
+    toast('حدث خطأ أثناء الحذف فى Firebase — تأكد من الاتصال بالإنترنت');
+  });
+}
+
+function getBranches(){ return cache.branches || []; }
+function saveBranches(b){ cache.branches = b; firebaseWrite('app_data/branches', b); }
+function getMain(id){ return (cache.main && cache.main[id]) || null; }
+function saveMain(id, d){ cache.main[id] = d; firebaseWrite('app_data/main/'+id, d); }
+function getShortage(id){ return (cache.shortage && cache.shortage[id]) || {updatedAt:null, items:[]}; }
+function saveShortage(id, d){ cache.shortage[id] = d; firebaseWrite('app_data/shortage/'+id, d); }
+function getReports(id){ return (cache.reports && cache.reports[id]) || null; }
+function saveReports(id, d){ cache.reports[id] = d; firebaseWrite('app_data/reports/'+id, d); }
+function clearReports(id){ delete cache.reports[id]; firebaseRemove('app_data/reports/'+id); }
 
 function norm(v){ return (v===undefined||v===null) ? '' : String(v).trim(); }
 function toNum(v){ const n = parseFloat(v); return isNaN(n) ? 0 : n; }
@@ -318,8 +371,7 @@ function showApp(user){
   document.getElementById('loginPassword').value = '';
   if(!appInitialized){
     appInitialized = true;
-    expireOldReports();
-    renderBranches();
+    attachDataListener(); // يحمّل البيانات من Firebase أول مرة، ثم يعيد الرسم تلقائيًا مع أي تحديث
     setInterval(expireOldReports, 1000*60*30); // recheck every 30 min
   }
 }
@@ -371,6 +423,7 @@ function doLogout(){
   if(!confirm('هل تريد تسجيل الخروج؟')) return;
   currentUser = null;
   appInitialized = false;
+  detachDataListener();
   LS.del('ibs_current_user');
   showLogin();
 }
@@ -433,7 +486,9 @@ function deleteBranch(id){
   const b = getBranches().find(x=>x.id===id);
   if(!confirm('حذف فرع "'+(b?b.name:'')+'" نهائيًا مع كل بياناته (الليستة اليومية، النواقص، الريبورتات)؟')) return;
   saveBranches(getBranches().filter(x=>x.id!==id));
-  LS.del('ibs_main_'+id); LS.del('ibs_shortage_'+id); LS.del('ibs_reports_'+id);
+  delete cache.main[id]; firebaseRemove('app_data/main/'+id);
+  delete cache.shortage[id]; firebaseRemove('app_data/shortage/'+id);
+  delete cache.reports[id]; firebaseRemove('app_data/reports/'+id);
   renderBranches();
   toast('تم حذف الفرع');
 }
