@@ -848,6 +848,29 @@ function downloadInstashop(branchId){
   XLSX.writeFile(wb, name+'.xlsx');
 }
 
+/* تصدير ليستة النواقص: كود الصنف، اسم الصنف، الرصيد، السعر (الاسم/الرصيد/السعر من آخر ليستة يومية) */
+function exportShortageSheet(branchId){
+  const shortage = getShortage(branchId);
+  if(!shortage.items.length){ toast('لا توجد ليستة نواقص لتصديرها'); return; }
+  const main = getMain(branchId);
+  const aoa = [['كود الصنف','اسم الصنف','رصيد الصنف','سعر الصنف']];
+  shortage.items.forEach(it=>{
+    const found = main && main.items.find(m => m.code === it.code);
+    aoa.push([
+      it.code,
+      found ? found.name : '',
+      found ? found.qty : '',
+      found ? found.price : ''
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:14},{wch:34},{wch:12},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  const name = branchName(branchId) + ' - نواقص';
+  XLSX.utils.book_append_sheet(wb, ws, safeSheetName(name));
+  XLSX.writeFile(wb, name+'.xlsx');
+}
+
 /* يهرب أي قيمة لتناسب صيغة CSV (فواصل، اقتباسات، أسطر جديدة) */
 function csvEscape(v){
   const s = String(v ?? '');
@@ -974,6 +997,7 @@ function renderBranchCard(b){
             </table>
           </div>` : ''}
           <button class="btn btn-ghost btn-sm" style="width:100%; margin-top:10px" onclick="openBulkAddShortage('${b.id}')">+ إضافة أصناف بالجملة</button>
+          ${shortage.items.length ? `<button class="btn btn-accent btn-sm" style="width:100%; margin-top:8px" onclick="exportShortageSheet('${b.id}')">⬇ Export sheet</button>` : ''}
         </div>
 
         <div class="box">
