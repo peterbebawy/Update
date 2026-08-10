@@ -1293,7 +1293,8 @@ const TALABAT_CODE_MAP = {
   'abaasya': 'Abaasya_796706'
 };
 function talabatFileName(branchId){
-  const name = branchName(branchId);
+  const rawName = branchName(branchId);
+  const name = dedupeRepeatedBranchName(rawName);
   const mapped = TALABAT_CODE_MAP[name.trim().toLowerCase()];
   return mapped || name;
 }
@@ -1309,8 +1310,17 @@ const BRANCH_SHEET_NAME_MAP = {
   'watanya': 'watanya',
   'abaasya': 'abaasya'
 };
+/* لو اسم الفرع اتكتب أو اتخزن غلط بتكرار (مثلاً "midtown to midtown")
+   بترجع الاسم مرة واحدة بس، عشان اسم الشيت والملف يطلع "midtown" مش "midtown to midtown" */
+function dedupeRepeatedBranchName(rawName){
+  const name = String(rawName || '').trim();
+  const parts = name.split(/\s+to\s+/i).map(p => p.trim().toLowerCase()).filter(Boolean);
+  if(parts.length > 1 && new Set(parts).every(p => p === parts[0])) return parts[0];
+  return name;
+}
 function branchSheetFileName(branchId){
-  const name = branchName(branchId);
+  const rawName = branchName(branchId);
+  const name = dedupeRepeatedBranchName(rawName);
   const mapped = BRANCH_SHEET_NAME_MAP[name.trim().toLowerCase()];
   return mapped || name;
 }
