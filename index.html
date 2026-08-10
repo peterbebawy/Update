@@ -609,7 +609,7 @@ function doLogout(){
 if(currentUser){ showApp(currentUser); } else { showLogin(); }
 
 /* ===================== TOAST ===================== */
-let toastTimer;
+var toastTimer;
 function toast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg;
