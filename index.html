@@ -12,6 +12,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
   :root{
     --ink:#1c2321;
@@ -418,31 +419,17 @@ function attachDataListener(){
 /* مراقبة حالة الاتصال بفايربيز (مسار خاص .info/connected بيوفره فايربيز نفسه) —
    بيوضح للمستخدم فورًا لو النت اتقطع أو رجع تاني، بدل ما الصفحة تفضل واقفة بصمت */
 let connectionWatcherAttached = false;
-/* null = لسه محددناش حالة الاتصال (أول تحميل)، true = متصل فعليًا قبل كده، false = مقطوع فعليًا قبل كده.
-   مهم إنها تبدأ null مش true، عشان أول ما فايربيز يبدأ يتصل بيبعت false لحظيًا قبل ما الاتصال يكتمل،
-   وده كان بيتفسّر غلط على إنه "فقد اتصال" مع إن الاتصال أصلاً لسه بيتظبط لأول مرة */
-let wasConnected = null;
-let disconnectToastTimer = null;
+let wasConnected = true;
 function watchConnectionState(){
   if(connectionWatcherAttached) return;
   connectionWatcherAttached = true;
   firebase.database().ref('.info/connected').on('value', snap=>{
     const connected = snap.val() === true;
-
-    if(connected){
-      /* لو رجع الاتصال قبل ما نعرض رسالة الفصل أصلاً (فصل لحظى جدًا)، نلغى الرسالة ومنضايقش المستخدم بيها */
-      if(disconnectToastTimer){ clearTimeout(disconnectToastTimer); disconnectToastTimer = null; }
-      if(wasConnected === false){
-        toast('✅ تم استعادة الاتصال بالخادم');
-      }
-    } else if(wasConnected === true){
-      /* منوريش المستخدم فورًا؛ منستنى ثوانى قليلة، لإن انقطاعات لحظية (قفل الشاشة، تبديل التابات) بترجع لوحدها بسرعة */
-      disconnectToastTimer = setTimeout(()=>{
-        toast('⚠️ تم فقد الاتصال بالخادم — جارٍ محاولة إعادة الاتصال...');
-        disconnectToastTimer = null;
-      }, 3000);
+    if(!connected && wasConnected){
+      toast('⚠️ تم فقد الاتصال بالخادم — جارٍ محاولة إعادة الاتصال...');
+    } else if(connected && !wasConnected){
+      toast('✅ تم استعادة الاتصال بالخادم');
     }
-
     wasConnected = connected;
   });
 }
@@ -455,8 +442,7 @@ function detachDataListener(){
   firstDataReceived = false;
   if(connectionWatcherAttached){
     connectionWatcherAttached = false;
-    wasConnected = null;
-    if(disconnectToastTimer){ clearTimeout(disconnectToastTimer); disconnectToastTimer = null; }
+    wasConnected = true;
     firebase.database().ref('.info/connected').off();
   }
 }
@@ -1333,29 +1319,71 @@ function safeSheetName(name){
   return String(name).replace(/[\\/?*\[\]:]/g,'-').slice(0,31);
 }
 
-function downloadVezeeta(branchId){
-  const f = buildVezeetaFile(branchId);
+async function downloadVezeeta(branchId){
+  const f = await buildVezeetaFile(branchId);
   if(!f){ toast('أنشئ الريبورتات أولاً'); return; }
-  XLSX.writeFile(f.workbook, f.filename);
+  const url = URL.createObjectURL(f.blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = f.filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
-/* يبني ملف Vezeeta لفرع معين ويرجّع الـ workbook + الـ blob + اسم الملف */
-function buildVezeetaFile(branchId){
+/* يبني ملف Vezeeta لفرع معين بنفس الفورمات بالظبط اللى بيجي من فيزيتا نفسها:
+   هيدر (كود / إسم الصنف / سعر البيع / الرصيد) كـ Excel Table حقيقي بستايل أزرق،
+   خط الهيدر أبيض بولد وإيطاليك، عرض أعمدة مطابق، وصفوف متبادلة اللون.
+   يرجّع الـ workbook + الـ blob + اسم الملف */
+async function buildVezeetaFile(branchId){
   const r = getReports(branchId);
   if(!r) return null;
-  const aoa = [['كود الصنف','إسم الصنف','سعر البيع','الرصيد']];
-  r.items.forEach(it => aoa.push([codeToNumber(it.code), it.name, it.price, it.balance]));
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{wch:14},{wch:34},{wch:12},{wch:10}];
-  ws['!autofilter'] = { ref: 'A1:D'+aoa.length }; /* تنسيق A:D كـ Table مع فلتر فى الهيدر */
-  const wb = XLSX.utils.book_new();
+
+  const wb = new ExcelJS.Workbook();
   const name = branchSheetFileName(branchId);
-  XLSX.utils.book_append_sheet(wb, ws, safeSheetName(name));
-  const arr = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+  const sheetName = safeSheetName(name);
+  const ws = wb.addWorksheet(sheetName);
+
+  /* عرض الأعمدة بالظبط زي شيت فيزيتا الأصلي */
+  ws.getColumn(1).width = 12.45;
+  ws.getColumn(2).width = 65.45;
+  ws.getColumn(3).width = 8.45;
+  ws.getColumn(4).width = 7.63;
+
+  const rows = r.items.map(it => [codeToNumber(it.code), it.name, it.price, it.balance]);
+
+  ws.addTable({
+    name: 'Table_' + sheetName.replace(/[^A-Za-z0-9_]/g, '_'),
+    ref: 'A1',
+    headerRow: true,
+    totalsRow: false,
+    style: { theme: 'TableStyleMedium2', showRowStripes: true },
+    columns: [
+      { name: 'كود' },
+      { name: 'إسم الصنف' },
+      { name: 'سعر البيع' },
+      { name: 'الرصيد' }
+    ],
+    rows: rows.length ? rows : [['', '', '', '']]
+  });
+
+  /* هيدر: بولد وإيطاليك وأبيض بالظبط زي شيت فيزيتا الأصلي */
+  ws.getRow(1).eachCell(cell => {
+    cell.font = { name:'Aptos Narrow', size:11, bold:true, italic:true, color:{argb:'FFFFFFFF'} };
+    cell.alignment = { horizontal:'center' };
+  });
+  /* صفوف البيانات: نفس الخط */
+  for(let i=2; i<=rows.length+1; i++){
+    ws.getRow(i).eachCell(cell => { cell.font = { name:'Aptos Narrow', size:11 }; });
+  }
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const filename = sheetName + '.xlsx';
   return {
     workbook: wb,
-    filename: name+'.xlsx',
-    blob: new Blob([arr], {type:'application/octet-stream'})
+    filename,
+    blob: new Blob([buffer], {type:'application/octet-stream'})
   };
 }
 
@@ -1519,7 +1547,7 @@ async function exportAllVezeetaToFolder(){
     if(dir){
       let count = 0;
       for(const b of branches){
-        const f = buildVezeetaFile(b.id);
+        const f = await buildVezeetaFile(b.id);
         if(!f) continue;
         await writeFileToDir(dir, f.filename, f.blob);
         count++;
