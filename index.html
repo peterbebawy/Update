@@ -418,17 +418,31 @@ function attachDataListener(){
 /* مراقبة حالة الاتصال بفايربيز (مسار خاص .info/connected بيوفره فايربيز نفسه) —
    بيوضح للمستخدم فورًا لو النت اتقطع أو رجع تاني، بدل ما الصفحة تفضل واقفة بصمت */
 let connectionWatcherAttached = false;
-let wasConnected = true;
+/* null = لسه محددناش حالة الاتصال (أول تحميل)، true = متصل فعليًا قبل كده، false = مقطوع فعليًا قبل كده.
+   مهم إنها تبدأ null مش true، عشان أول ما فايربيز يبدأ يتصل بيبعت false لحظيًا قبل ما الاتصال يكتمل،
+   وده كان بيتفسّر غلط على إنه "فقد اتصال" مع إن الاتصال أصلاً لسه بيتظبط لأول مرة */
+let wasConnected = null;
+let disconnectToastTimer = null;
 function watchConnectionState(){
   if(connectionWatcherAttached) return;
   connectionWatcherAttached = true;
   firebase.database().ref('.info/connected').on('value', snap=>{
     const connected = snap.val() === true;
-    if(!connected && wasConnected){
-      toast('⚠️ تم فقد الاتصال بالخادم — جارٍ محاولة إعادة الاتصال...');
-    } else if(connected && !wasConnected){
-      toast('✅ تم استعادة الاتصال بالخادم');
+
+    if(connected){
+      /* لو رجع الاتصال قبل ما نعرض رسالة الفصل أصلاً (فصل لحظى جدًا)، نلغى الرسالة ومنضايقش المستخدم بيها */
+      if(disconnectToastTimer){ clearTimeout(disconnectToastTimer); disconnectToastTimer = null; }
+      if(wasConnected === false){
+        toast('✅ تم استعادة الاتصال بالخادم');
+      }
+    } else if(wasConnected === true){
+      /* منوريش المستخدم فورًا؛ منستنى ثوانى قليلة، لإن انقطاعات لحظية (قفل الشاشة، تبديل التابات) بترجع لوحدها بسرعة */
+      disconnectToastTimer = setTimeout(()=>{
+        toast('⚠️ تم فقد الاتصال بالخادم — جارٍ محاولة إعادة الاتصال...');
+        disconnectToastTimer = null;
+      }, 3000);
     }
+
     wasConnected = connected;
   });
 }
@@ -441,7 +455,8 @@ function detachDataListener(){
   firstDataReceived = false;
   if(connectionWatcherAttached){
     connectionWatcherAttached = false;
-    wasConnected = true;
+    wasConnected = null;
+    if(disconnectToastTimer){ clearTimeout(disconnectToastTimer); disconnectToastTimer = null; }
     firebase.database().ref('.info/connected').off();
   }
 }
