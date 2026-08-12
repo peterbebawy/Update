@@ -404,12 +404,15 @@ function attachDataListener(){
       // أول مرة: نزرع كلمة السر الافتراضية فى فايربيز عشان تتخزن هناك بدل ما تكون مكتوبة فى كود الصفحة
       firebaseWrite('app_data/settings/deleteBranchPassword', DELETE_BRANCH_PASSWORD_DEFAULT);
     }
-    expireOldReports();
+    // أظهر الفروع أولاً، ثم نفّذ الأعمال الثانوية بعد رسم الواجهة
     renderBranches();
-    renderUnavailableList();
-    populateChainBranchFilter();
-    const chainInput = document.getElementById('chainSearchInput');
-    if(chainInput && chainInput.value) runSearchChain(chainInput.value);
+    requestAnimationFrame(()=>{
+      expireOldReports();
+      renderUnavailableList();
+      populateChainBranchFilter();
+      const chainInput = document.getElementById('chainSearchInput');
+      if(chainInput && chainInput.value) runSearchChain(chainInput.value);
+    });
   }, err=>{
     console.error('Firebase sync error:', err);
     toast('تعذر الاتصال بقاعدة بيانات Firebase');
@@ -795,30 +798,44 @@ async function handleUnifiedMainUpload(input){
   const checklistEl = document.getElementById('unifiedMainChecklist');
   try{
     const rows = await readWorkbookRows(file);
+    toast('تم قراءة الليستة بنجاح — جارٍ تجهيز وتوزيع البيانات على الفروع بأقصى سرعة...');
     const dataRows = hasHeader ? rows.slice(1) : rows;
 
     const branches = getBranches();
     const matched = [], unmatched = [];
     const updates = {};
+    const validRows = dataRows.filter(r => norm(r[0]) !== '');
+    const uploadedAt = now();
+    const codes = new Array(validRows.length);
+    const names = new Array(validRows.length);
+    const categories = new Array(validRows.length);
+    const relatedTos = new Array(validRows.length);
+    const prices = new Array(validRows.length);
+
+    /* تجهيز الأعمدة المشتركة مرة واحدة بدل إعادة قراءة وتحويل كل صف لكل فرع */
+    for(let i=0;i<validRows.length;i++){
+      const r = validRows[i];
+      codes[i] = norm(r[0]);
+      names[i] = norm(r[1]);
+      categories[i] = norm(r[3]);
+      relatedTos[i] = norm(r[11]);
+      prices[i] = toNum(r[12]);
+    }
 
     branches.forEach(b=>{
       const colLetter = getBranchBalanceColumn(b.name);
       if(!colLetter){ unmatched.push(b.name); return; }
       const balCol = colToIndex(colLetter);
-      const items = dataRows
-        .filter(r => norm(r[0]) !== '')
-        .map(r => ({
-          code: norm(r[0]),
-          name: norm(r[1]),
-          category: norm(r[3]),
-          relatedTo: norm(r[11]), /* عمود L: كود بديل/مرتبط بالصنف (Related to) */
-          price: toNum(r[12]),
-          qty: toNum(r[balCol])
-        }));
-      const data = {uploadedAt: now(), fileName: file.name, items};
+      const items = new Array(validRows.length);
+      let withBalance = 0;
+      for(let i=0;i<validRows.length;i++){
+        const qty = toNum(validRows[i][balCol]);
+        if(qty > 0) withBalance++;
+        items[i] = {code:codes[i], name:names[i], category:categories[i], relatedTo:relatedTos[i], price:prices[i], qty};
+      }
+      const data = {uploadedAt, fileName: file.name, items};
       cache.main[b.id] = data;
       updates['app_data/main/'+b.id] = data;
-      const withBalance = items.filter(it => it.qty > 0).length;
       matched.push({name: b.name, col: colLetter, count: items.length, withBalance});
     });
 
@@ -848,7 +865,7 @@ async function handleUnifiedMainUpload(input){
     }
 
     renderBranches();
-    if(statusEl) statusEl.innerHTML = `آخر رفع: ${fmtDate(now())} — تم الحفظ بنجاح وتحديث ${matched.length} فرع`;
+    if(statusEl) statusEl.innerHTML = `تم قراءة الليستة وتوزيعها وحفظها بنجاح — ${fmtDate(now())} — تم تحديث ${matched.length} فرع`;
 
     if(checklistEl){
       const rowsHtml = matched.map(m => `
