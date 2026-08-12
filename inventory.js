@@ -12,6 +12,34 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 
 
+/* ===== Firebase diagnostic mode ===== */
+const DIAG = { login:false, connected:null, branchesCount:null, rawApp:null, rawLegacy:null, error:'' };
+function diagShow(){ const e=document.getElementById('firebaseDiagnostic'); if(e) e.style.display='block'; }
+function diagRender(){
+  diagShow();
+  const c=document.getElementById('diagConn'), l=document.getElementById('diagLogin'), b=document.getElementById('diagBranches'), er=document.getElementById('diagError'), d=document.getElementById('diagDetails');
+  if(c) c.textContent='Firebase: '+(DIAG.connected===true?'CONNECTED':DIAG.connected===false?'DISCONNECTED':'CHECKING');
+  if(l) l.textContent='Login message: '+(DIAG.login?'RECEIVED':'WAITING');
+  if(b) b.textContent='Branches: '+(DIAG.branchesCount===null?'CHECKING':String(DIAG.branchesCount));
+  if(er) er.textContent=DIAG.error?'ERROR: '+DIAG.error:'';
+  if(d) d.textContent=JSON.stringify({databaseURL:firebaseConfig.databaseURL, appDataBranches:DIAG.rawApp, legacyBranches:DIAG.rawLegacy, currentUser:currentUser?{id:currentUser.id,name:currentUser.name,sharedLogin:currentUser.sharedLogin}:null},null,2);
+}
+async function runFirebaseDiagnostic(){
+  diagRender();
+  try{
+    const snap=await firebase.database().ref('app_data/branches').once('value');
+    DIAG.rawApp=snap.val();
+    DIAG.branchesCount=normalizeBranchesValue(snap.val()).length;
+  }catch(e){ DIAG.error=String(e && (e.code||e.message) || e); }
+  try{
+    const snap=await firebase.database().ref('branches').once('value');
+    DIAG.rawLegacy=snap.val();
+    if(!DIAG.branchesCount) DIAG.branchesCount=normalizeBranchesValue(snap.val()).length;
+  }catch(e){ if(!DIAG.error) DIAG.error=String(e && (e.code||e.message) || e); }
+  diagRender();
+}
+
+
 /* ===== separated inventory script ===== */
 
 /* ===================== STORAGE HELPERS ===================== */
@@ -170,6 +198,7 @@ async function attachDataListener(){
       firstDataReceived = true;
       clearTimeout(firstLoadTimeoutTimer);
       const raw = snapshot.val();
+      if(key === 'branches'){ DIAG.rawApp = raw; DIAG.branchesCount = normalizeBranchesValue(raw).length; diagRender(); }
       setSection(key, raw);
       /* Apply only pending operations that belong to this section. This keeps a
          refresh consistent without cloning the entire app_data tree. */
@@ -186,6 +215,7 @@ async function attachDataListener(){
     };
     const errCb = err=>{
       console.error('Firebase sync error at app_data/'+key+':', err);
+      if(key==='branches'){ DIAG.error = String(err && (err.code || err.message) || err); diagRender(); }
       updateFirebaseStatus(false, (err && (err.code || err.message)) ? String(err.code || err.message) : 'Firebase read error');
       if(!firstDataReceived){
         const list=document.getElementById('branches-list');
@@ -236,6 +266,7 @@ function watchConnectionState(){
   connectionWatcherAttached = true;
   firebase.database().ref('.info/connected').on('value', snap=>{
     const connected = snap.val() === true;
+    DIAG.connected = connected; diagRender();
     updateFirebaseStatus(connected);
     if(wasConnected === false && connected){
       toast('✅ تم استعادة الاتصال بقاعدة Firebase');
@@ -691,10 +722,10 @@ function requireSharedPermission(key, message){
   return false;
 }
 
-// إبلاغ البوابة الرئيسية أن نظام المخزون جاهز لاستقبال جلسة الدخول
-try { window.parent.postMessage({type:'inventoryReady'}, '*'); } catch(e) {}
+// سجل listener أولًا ثم أعلن الجاهزية؛ منعًا لضياع رسالة تسجيل الدخول بسبب race condition.
 window.addEventListener('message', function(event){
   if(!event || !event.data || event.data.type !== 'sharedInventoryLogin') return;
+  DIAG.login = true; diagRender();
   const user = event.data.user || {};
   const perms = event.data.permissions || (user.permissions || {});
   if(!perms.inventoryAccess){
@@ -712,7 +743,11 @@ window.addEventListener('message', function(event){
   LS.set('ibs_current_user', currentUser);
   showApp(currentUser);
   renderBranches();
+  runFirebaseDiagnostic();
 });
+
+// الآن أصبح listener جاهزًا، أعلن للبوابة الرئيسية أنها تستطيع إرسال بيانات الدخول.
+try { window.parent.postMessage({type:'inventoryReady'}, '*'); } catch(e) {}
 
 function updateBulkPermissionUI(){
   const addBtn = document.getElementById('bulkAddAllShortageBtn');
@@ -2562,4 +2597,3 @@ function escAttr(s){ return escHtml(s); }
 
 /* ===================== INIT ===================== */
 /* بدء التطبيق يتم الآن من خلال showApp() بعد تأكيد تسجيل الدخول عبر Firebase */
- 
