@@ -54,6 +54,16 @@
   <div id="firebaseStatus" class="firebase-status offline" title="Realtime Database: update-app-b7418">● Firebase جاري الفحص...</div>
 </header>
 
+<div id="firebaseDiagnostic" style="display:none;position:sticky;top:0;z-index:99999;background:#111;color:#fff;padding:10px 14px;font:12px/1.5 Arial,sans-serif;border-bottom:1px solid #444;direction:ltr;text-align:left">
+  <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+    <b id="diagConn">Firebase: checking...</b>
+    <span id="diagLogin">Login message: waiting...</span>
+    <span id="diagBranches">Branches: checking...</span>
+    <span id="diagPath">Path: app_data/branches</span>
+  </div>
+  <div id="diagError" style="margin-top:5px;white-space:pre-wrap;color:#ffb3b3"></div>
+  <details style="margin-top:5px"><summary>Firebase diagnostic details</summary><pre id="diagDetails" style="white-space:pre-wrap;max-height:220px;overflow:auto;margin:6px 0 0"></pre></details>
+</div>
 <main>
 
   <!-- ===== BRANCHES VIEW ===== -->
@@ -172,4 +182,3 @@
 <script src="inventory.js"></script>
 </body>
 </html>
- 
