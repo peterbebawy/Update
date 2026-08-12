@@ -246,4 +246,3 @@ table tbody tr:hover{background:rgba(0,122,255,.035)!important;}
 .firebase-status{position:fixed;top:14px;right:18px;z-index:10001;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800;background:#fff;border:1px solid #e2e8f0;box-shadow:0 4px 14px rgba(0,0,0,.08)}
 .firebase-status.online{color:#15803d;border-color:#bbf7d0;background:#f0fdf4}
 .firebase-status.offline{color:#b91c1c;border-color:#fecaca;background:#fef2f2}
- 
