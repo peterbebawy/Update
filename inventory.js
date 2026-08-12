@@ -12,6 +12,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 
 
+/* ===== separated inventory script ===== */
 
 /* ===================== STORAGE HELPERS ===================== */
 /* بيانات الجلسة (المستخدم الحالي) فقط تُحفظ محليًا. بيانات الفروع/الليستات/النواقص/الريبورتات
@@ -33,10 +34,35 @@ let dataListenerAttached = false;
    ما يقفلش كل الفروع ويرجّع الشاشة فاضية؛ بدل كده نعيد فتح نفس الفرع اللي كان مفتوح. */
 let currentOpenBranchId = null;
 
+function normalizeBranchesValue(value){
+  if(!value) return [];
+  if(Array.isArray(value)){
+    return value.filter(Boolean).map((branch,index)=>{
+      const b = (branch && typeof branch === 'object') ? {...branch} : {name:String(branch ?? '')};
+      if(!b.id) b.id = String(index);
+      return b;
+    }).filter(b=>String(b.name||'').trim());
+  }
+  if(typeof value === 'object'){
+    // دعم تخزين Firebase كـ object keyed by the branch id.
+    if(value.name){
+      const b = {...value};
+      if(!b.id) b.id = uid();
+      return [b];
+    }
+    return Object.entries(value).map(([key,branch])=>{
+      const b = (branch && typeof branch === 'object') ? {...branch} : {name:String(branch ?? '')};
+      if(!b.id) b.id = key;
+      return b;
+    }).filter(b=>String(b.name||'').trim());
+  }
+  return [];
+}
+
 function normalizeCache(v){
   const val = v || {};
   return {
-    branches: Array.isArray(val.branches) ? val.branches : (val.branches ? Object.values(val.branches) : []),
+    branches: normalizeBranchesValue(val.branches),
     main: val.main || {},
     shortage: val.shortage || {},
     reports: val.reports || {},
@@ -97,7 +123,6 @@ let firstDataReceived = false;
 let firstLoadTimeoutTimer = null;
 
 async function attachDataListener(){
-  startTempCleanupWatcher();
   if(dataListenerAttached) return;
   await waitForOutboxReady();
   dataListenerAttached = true;
@@ -129,16 +154,8 @@ async function attachDataListener(){
   const topLevel = ['branches','main','shortage','reports','instashopReports','settings','catalogs','appAvailable','unavailableReports'];
   const listeners = [];
   const setSection = (key, value) => {
-    if(key === 'branches') {
-      if(Array.isArray(value)) {
-        cache.branches = value.map((b,i)=>({ id: String((b&&b.id) ?? i), ...(b&&typeof b==='object'?b:{}) }));
-      } else if(value && typeof value === 'object') {
-        cache.branches = Object.entries(value).map(([id,b])=>({ id:String((b&&b.id) ?? id), ...(b&&typeof b==='object'?b:{}) }));
-      } else {
-        cache.branches = [];
-      }
-    }
-    else if(key === 'main') { const raw=value && typeof value==='object' ? value : {}; const normalized={}; Object.keys(raw).forEach(id=>{ normalized[id]=normalizeMainNode(raw[id]); }); cache.main=normalized; }
+    if(key === 'branches') cache.branches = normalizeBranchesValue(value);
+    else if(key === 'main') cache.main = value && typeof value === 'object' ? value : {};
     else if(key === 'shortage') cache.shortage = value && typeof value === 'object' ? value : {};
     else if(key === 'reports') cache.reports = value && typeof value === 'object' ? value : {};
     else if(key === 'instashopReports') cache.instashopReports = value && typeof value === 'object' ? value : {};
@@ -169,6 +186,7 @@ async function attachDataListener(){
     };
     const errCb = err=>{
       console.error('Firebase sync error at app_data/'+key+':', err);
+      updateFirebaseStatus(false, (err && (err.code || err.message)) ? String(err.code || err.message) : 'Firebase read error');
       if(!firstDataReceived){
         const list=document.getElementById('branches-list');
         if(list) list.innerHTML='<div class="empty"><b>تعذّر تحميل البيانات</b>الاتصال بقاعدة البيانات بطيء أو متعطل — تأكد من اتصالك بالإنترنت</div>';
@@ -178,6 +196,19 @@ async function attachDataListener(){
     listeners.push({ref,cb});
   });
 
+  // Compatibility fallback: some older versions stored the branch list at /branches.
+  // If /app_data/branches is empty, read the legacy location without overwriting it.
+  firebase.database().ref('app_data/branches').once('value').then(snap=>{
+    if(normalizeBranchesValue(snap.val()).length) return;
+    return firebase.database().ref('branches').once('value').then(legacy=>{
+      const legacyBranches=normalizeBranchesValue(legacy.val());
+      if(legacyBranches.length && !(cache.branches||[]).length){
+        cache.branches=legacyBranches;
+        scheduleBranchesRender();
+      }
+    });
+  }).catch(err=>console.warn('Legacy branches fallback:',err));
+
   window.__inventoryDataListeners = listeners;
   watchConnectionState();
 }
@@ -186,23 +217,33 @@ async function attachDataListener(){
    بيوضح للمستخدم فورًا لو النت اتقطع أو رجع تاني، بدل ما الصفحة تفضل واقفة بصمت */
 let connectionWatcherAttached = false;
 let wasConnected = null;
+function updateFirebaseStatus(connected, errorText=''){
+  const el=document.getElementById('firebaseStatus');
+  if(!el) return;
+  el.className='firebase-status '+(connected ? 'online' : 'offline');
+  el.textContent=connected ? '● Firebase متصل' : '● Firebase غير متصل';
+  if(errorText){
+    el.title=errorText;
+    el.dataset.error=errorText;
+  } else {
+    el.title='Realtime Database: update-app-b7418';
+    el.dataset.error='';
+  }
+}
+
 function watchConnectionState(){
   if(connectionWatcherAttached) return;
   connectionWatcherAttached = true;
   firebase.database().ref('.info/connected').on('value', snap=>{
     const connected = snap.val() === true;
-    if(wasConnected === null){
-      wasConnected = connected;
-      if(!connected) toast('🟠 جاري الاتصال بقاعدة Firebase...');
-      return;
-    }
-    if(!connected && wasConnected){
-      toast('⚠️ تم فقد الاتصال بـ Firebase — جارٍ إعادة الاتصال...');
-    } else if(connected && !wasConnected){
-      toast('✅ تم استعادة الاتصال بـ Firebase');
+    updateFirebaseStatus(connected);
+    if(wasConnected === false && connected){
+      toast('✅ تم استعادة الاتصال بقاعدة Firebase');
+    } else if(wasConnected === true && !connected){
+      toast('⚠️ تم فقد الاتصال بقاعدة Firebase — جارٍ إعادة الاتصال...');
     }
     wasConnected = connected;
-  }, err=>console.error('Firebase connection watcher error:',err));
+  });
 }
 function detachDataListener(){
   if(!dataListenerAttached) return;
@@ -217,7 +258,7 @@ function detachDataListener(){
   currentOpenBranchId = null;
   if(connectionWatcherAttached){
     connectionWatcherAttached = false;
-    wasConnected = null;
+    wasConnected = true;
     firebase.database().ref('.info/connected').off();
   }
 }
@@ -404,64 +445,6 @@ async function firebaseBatchWriteNow(updates){
     while(idx<work.length){ const item=work[idx++]; await runFirebaseOp(item); }
   }
   await Promise.all(Array.from({length:Math.min(CONCURRENCY,work.length)},worker));
-}
-
-/* Unified-main writes are stored as small child records instead of one huge
-   app_data/main/<branch> object. This avoids Firebase's per-request size limit
-   even when one branch contains a very large sheet. The UI still sees the
-   normal {uploadedAt,fileName,items:[...]} shape through normalizeMainNode(). */
-const MAIN_ITEM_CHUNK_BYTES = 320 * 1024;
-function mainItemPath(branchId, index){ return 'app_data/main/'+branchId+'/items/'+String(index); }
-function normalizeMainNode(node){
-  if(!node || typeof node!=='object') return node || null;
-  if(Array.isArray(node.items)) return node;
-  if(node.items && typeof node.items==='object'){
-    const keys=Object.keys(node.items).sort((a,b)=>{
-      const na=Number(a), nb=Number(b);
-      return (Number.isFinite(na)&&Number.isFinite(nb)) ? na-nb : a.localeCompare(b);
-    });
-    return {...node,items:keys.map(k=>node.items[k]).filter(v=>v!==null&&v!==undefined)};
-  }
-  return {...node,items:[]};
-}
-function chunkEntriesByBytes(entries,maxBytes=MAIN_ITEM_CHUNK_BYTES){
-  const batches=[]; let batch={}; let bytes=0;
-  for(const [path,value] of entries){
-    let size=0; try{size=new Blob([JSON.stringify({[path]:value})]).size;}catch(e){size=JSON.stringify(value).length*2+path.length;}
-    if(size>maxBytes) throw Object.assign(new Error('Single inventory item is too large'),{code:'write_too_big',path});
-    if(Object.keys(batch).length && bytes+size>maxBytes){batches.push(batch); batch={}; bytes=0;}
-    batch[path]=value; bytes+=size;
-  }
-  if(Object.keys(batch).length) batches.push(batch);
-  return batches;
-}
-async function writeMainBranchChunked(branchId,data){
-  const ref=firebase.database().ref('app_data/main/'+branchId);
-  /* Remove the previous item children in safe batches. */
-  const oldSnap=await ref.child('items').once('value');
-  const old=oldSnap.val();
-  const removals=[];
-  if(old && typeof old==='object') Object.keys(old).forEach(k=>removals.push(['app_data/main/'+branchId+'/items/'+k,null]));
-  for(const batch of chunkEntriesByBytes(removals)) await firebase.database().ref().update(batch);
-  /* Write metadata first, then the new items in small root updates. */
-  await ref.update({uploadedAt:data.uploadedAt||now(),fileName:data.fileName||''});
-  const itemEntries=(Array.isArray(data.items)?data.items:[]).map((item,i)=>[mainItemPath(branchId,i),item]);
-  for(const batch of chunkEntriesByBytes(itemEntries)) await firebase.database().ref().update(batch);
-  const verify=await ref.once('value');
-  const normalized=normalizeMainNode(verify.val());
-  if(!normalized || !Array.isArray(normalized.items) || normalized.items.length !== itemEntries.length){
-    throw Object.assign(new Error('UNIFIED_MAIN_VERIFY_FAILED'),{code:'UNIFIED_MAIN_VERIFY_FAILED'});
-  }
-}
-async function removeMainBranchChunked(branchId){
-  const ref=firebase.database().ref('app_data/main/'+branchId);
-  const snap=await ref.child('items').once('value');
-  const old=snap.val(); const removals=[];
-  if(old && typeof old==='object') Object.keys(old).forEach(k=>removals.push(['app_data/main/'+branchId+'/items/'+k,null]));
-  for(const batch of chunkEntriesByBytes(removals)) await firebase.database().ref().update(batch);
-  await ref.update({uploadedAt:null,fileName:null});
-  const verify=await ref.once('value');
-  if(verify.exists() && Object.keys(verify.val()||{}).length) throw Object.assign(new Error('MAIN_BRANCH_DELETE_VERIFY_FAILED'),{code:'MAIN_BRANCH_DELETE_VERIFY_FAILED'});
 }
 
 function firebaseWrite(path, value){
@@ -922,226 +905,107 @@ function colToIndex(letters){
   return idx - 1;
 }
 
-/* قارئ سريع لملفات Excel/CSV — parsing + extraction يتم داخل Worker
-   لتقليل نقل البيانات بين Worker والصفحة وتسريع الشيتات الكبيرة. */
-let __xlsxWorker=null;
-function getXlsxWorker(){
-  if(__xlsxWorker) return __xlsxWorker;
-  const workerCode = `
-    importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
-    self.onmessage = function(e){
-      try{
-        const {buffer, baseCols, balanceCols} = e.data;
-        const wb = XLSX.read(buffer, {
-          type:'array', raw:true, cellDates:false, dense:true,
-          cellNF:false, cellStyles:false, cellHTML:false, cellFormula:false,
-          sheetStubs:false, bookDeps:false, bookFiles:false
-        });
-        if(!wb.SheetNames || !wb.SheetNames.length) throw new Error('EMPTY_WORKBOOK');
-        const ws=wb.Sheets[wb.SheetNames[0]];
-        if(!ws) throw new Error('EMPTY_SHEET');
-        const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true,blankrows:false});
-        if(!Array.isArray(rows) || !rows.length) throw new Error('EMPTY_SHEET');
-        const out=[];
-        const codeCol=baseCols.code, nameCol=baseCols.name, categoryCol=baseCols.category, relatedCol=baseCols.related, priceCol=baseCols.price;
-        for(let i=0;i<rows.length;i++){
-          const r=rows[i]||[];
-          const code=String(r[codeCol]??'').trim();
-          if(!code) continue;
-          const balances=new Array(balanceCols.length);
-          for(let j=0;j<balanceCols.length;j++) balances[j]=r[balanceCols[j]] ?? '';
-          out.push([
-            code,
-            String(r[nameCol]??'').trim(),
-            String(r[categoryCol]??'').trim(),
-            String(r[relatedCol]??'').trim(),
-            Number(r[priceCol])||0,
-            balances
-          ]);
-        }
-        self.postMessage({ok:true,rows:out,totalRows:rows.length});
-      }catch(err){ self.postMessage({ok:false,error:String(err&&err.message||err)}); }
-    };
-  `;
-  const blob=new Blob([workerCode],{type:'application/javascript'});
-  __xlsxWorker=new Worker(URL.createObjectURL(blob));
-  return __xlsxWorker;
-}
-async function readUnifiedWorkbook(file, balanceCols){
-  if(!file) throw new Error('NO_FILE');
-  const name=String(file.name||'').toLowerCase();
-  const ext=name.split('.').pop();
-  if(!['xlsx','xls','csv'].includes(ext)) throw new Error('UNSUPPORTED_FILE');
-  const buffer=await file.arrayBuffer();
-  return await new Promise((resolve,reject)=>{
-    const worker=getXlsxWorker();
-    const timer=setTimeout(()=>reject(new Error('XLSX_PARSE_TIMEOUT')),120000);
-    const done=()=>{clearTimeout(timer); worker.removeEventListener('message',onMessage); worker.removeEventListener('error',onError);};
-    const onMessage=e=>{ done(); if(e.data&&e.data.ok) resolve(e.data.rows); else reject(new Error(e.data&&e.data.error||'XLSX_PARSE_FAILED')); };
-    const onError=e=>{ done(); reject(e.error||new Error('XLSX_WORKER_ERROR')); };
-    worker.addEventListener('message',onMessage); worker.addEventListener('error',onError);
-    worker.postMessage({buffer,baseCols:{code:0,name:1,category:3,related:11,price:12},balanceCols},[buffer]);
-  });
-}
-
+/* قارئ ملفات موحّد وآمن لملفات Excel/CSV — يستخدم XLSX الموجود فى الصفحة */
 async function readWorkbookRows(file){
   if(!file) throw new Error('NO_FILE');
   const name=String(file.name||'').toLowerCase();
   const ext=name.split('.').pop();
   if(!['xlsx','xls','csv'].includes(ext)) throw new Error('UNSUPPORTED_FILE');
   const buffer=await file.arrayBuffer();
-  return await new Promise((resolve,reject)=>{
-    const worker=getXlsxWorker();
-    const timer=setTimeout(()=>reject(new Error('XLSX_PARSE_TIMEOUT')),120000);
-    const done=()=>{clearTimeout(timer); worker.removeEventListener('message',onMessage); worker.removeEventListener('error',onError);};
-    const onMessage=e=>{ done(); if(e.data&&e.data.ok) resolve(e.data.rows); else reject(new Error(e.data&&e.data.error||'XLSX_PARSE_FAILED')); };
-    const onError=e=>{ done(); reject(e.error||new Error('XLSX_WORKER_ERROR')); };
-    worker.addEventListener('message',onMessage); worker.addEventListener('error',onError);
-    worker.postMessage({buffer,baseCols:{code:0,name:1,category:3,related:11,price:12},balanceCols:[]},[buffer]);
-  });
+  const wb=XLSX.read(buffer,{type:'array',cellDates:false,raw:true});
+  if(!wb.SheetNames || !wb.SheetNames.length) throw new Error('EMPTY_WORKBOOK');
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  if(!ws) throw new Error('EMPTY_SHEET');
+  const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true,blankrows:false});
+  if(!Array.isArray(rows) || !rows.length) throw new Error('EMPTY_SHEET');
+  return rows.map(row=>Array.isArray(row)?row:[]);
 }
 
-function removePendingMainOutboxOps(){
-  try{
-    const q = loadOutbox();
-    const kept = (Array.isArray(q)?q:[]).filter(op=>{
-      const path = String(op && op.path || '');
-      return !(path === 'app_data/main' || path.startsWith('app_data/main/'));
-    });
-    if(kept.length !== (Array.isArray(q)?q.length:0)) saveOutbox(kept);
-  }catch(e){ console.warn('removePendingMainOutboxOps skipped:', e); }
-}
-
-/* ===================== AUTOMATIC DATA RETENTION =====================
-   Unified-sheet/report data is temporary. Shortage data is NEVER touched here.
-   The client records the last accepted sheet time. On Spark (without Cloud Functions),
-   cleanup is performed automatically while Website 2 is open; if the site was closed,
-   the same check runs immediately when it is opened again. Shortage is never touched. */
-const TEMP_DATA_RETENTION_MS = 60 * 60 * 1000;
-const TEMP_CLEANUP_MARKER = 'app_data/_system/tempDataReceivedAt';
-let tempCleanupTimer = null;
-async function markTempDataReceived(){
-  const ts = Date.now();
-  try { await firebase.database().ref(TEMP_CLEANUP_MARKER).set(ts); }
-  catch(e){ console.warn('Could not record temp-data retention marker:', e); }
-}
-async function runClientTempCleanup(){
-  try{
-    const snap = await firebase.database().ref(TEMP_CLEANUP_MARKER).once('value');
-    const ts = Number(snap.val() || 0);
-    if(!ts || Date.now()-ts < TEMP_DATA_RETENTION_MS) return false;
-
-    /*
-      IMPORTANT: never call remove() on a large parent such as app_data/main.
-      That was the source of WRITE_TOO_BIG in the previous versions.
-      deleteLargeFirebasePath() deletes leaf nodes in small multi-location
-      updates, so cleanup remains safe even when one branch contains a huge
-      inventory sheet.
-    */
-    const paths = [
-      'app_data/main',
-      'app_data/reports',
-      'app_data/instashopReports',
-      'app_data/unavailableReports'
-    ];
-
-    let totalBatches = 0;
-    for(const p of paths){
-      try{
-        const result = await deleteLargeFirebasePath(p);
-        totalBatches += Number(result && result.batches || 0);
-      }catch(e){
-        console.warn('Temporary cleanup failed for',p,e);
-        /* Do not clear the marker if any cleanup path failed.
-           The next check will retry the failed cleanup. */
-        return false;
-      }
-    }
-
-    /* Verify main is actually empty before clearing the marker. */
-    const verifyMain = await firebase.database().ref('app_data/main').once('value');
-    if(verifyMain.exists()) {
-      console.warn('Temporary cleanup verification failed: app_data/main still exists');
-      return false;
-    }
-
-    /* Never touch shortage, branches, users, permissions, or settings. */
-    await firebase.database().ref(TEMP_CLEANUP_MARKER).remove();
-    console.info('Automatic temporary-data cleanup completed:', {totalBatches});
-    return true;
-  }catch(e){
-    console.warn('Temporary data cleanup check failed:',e);
-    return false;
-  }
-}
-function startTempCleanupWatcher(){
-  if(tempCleanupTimer) return;
-  runClientTempCleanup();
-  tempCleanupTimer = setInterval(runClientTempCleanup, 5*60*1000);
-}
-
+/* رفع شيت واحد موحد لكل الفروع: A=كود الصنف، B=اسم الصنف، M=سعر الصنف، ورصيد كل فرع فى عموده الخاص */
 async function handleUnifiedMainUpload(input){
   const file = input.files[0];
   if(!file) return;
-  if(unifiedMainOperationBusy){ toast('انتظر انتهاء عملية رفع الليستة الموحدة'); input.value=''; return; }
+  if(unifiedMainOperationBusy){ toast('انتظر انتهاء عملية حذف/رفع الليستة الموحدة'); input.value=''; return; }
   unifiedMainOperationBusy = true;
   const hasHeader = document.getElementById('unifiedMainHeader').checked;
   const statusEl = document.getElementById('unifiedMainStatus');
   const checklistEl = document.getElementById('unifiedMainChecklist');
   try{
+    const rows = await readWorkbookRows(file);
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+
     const branches = getBranches();
-    const branchSpecs = branches.map(b=>({id:b.id,name:b.name,col:getBranchBalanceColumn(b.name),idx:getBranchBalanceColumn(b.name)?colToIndex(getBranchBalanceColumn(b.name)):-1}));
-    const balanceCols=[...new Set(branchSpecs.filter(x=>x.idx>=0).map(x=>x.idx))];
-    const balancePos=new Map(balanceCols.map((c,i)=>[c,i]));
-    if(statusEl) statusEl.innerHTML = '⚡ جارٍ قراءة الأعمدة المطلوبة فقط داخل Worker...';
-    const compactRows = await readUnifiedWorkbook(file,balanceCols);
-    const start=hasHeader ? 1 : 0;
-    /* Worker already returns data rows only. For header-enabled sheets the first
-       extracted row is the header and has to be discarded. */
-    const dataRows = hasHeader ? compactRows.slice(1) : compactRows;
-    const baseRows = dataRows.map(x=>({code:x[0],name:x[1],category:x[2],relatedTo:x[3],price:x[4],balances:x[5]}));
-    const matched=[], unmatched=[];
-    removePendingMainOutboxOps();
-    if(statusEl) statusEl.innerHTML = `⚡ تم استخراج ${baseRows.length.toLocaleString()} صنف — تجهيز الفروع بسرعة...`;
-    const branchJobs=[];
-    branchSpecs.forEach(spec=>{
-      if(spec.idx<0){
-        unmatched.push(spec.name);
-        branchJobs.push(async()=>{ await removeMainBranchChunked(spec.id); delete cache.main[spec.id]; });
-        return;
-      }
-      const pos=balancePos.get(spec.idx);
-      branchJobs.push(async()=>{
-        const items=new Array(baseRows.length); let withBalance=0;
-        for(let i=0;i<baseRows.length;i++){
-          const x=baseRows[i], rawQty=x.balances[pos], qty=toNum(rawQty);
-          items[i]={code:x.code,name:x.name,category:x.category,relatedTo:x.relatedTo,price:x.price,qty};
-          if(qty>0) withBalance++;
-        }
-        const data={uploadedAt:now(),fileName:file.name,items};
-        cache.main[spec.id]=data;
-        await writeMainBranchChunked(spec.id,data);
-        matched.push({name:spec.name,col:getBranchBalanceColumn(spec.name),count:items.length,withBalance});
-      });
+    const matched = [], unmatched = [];
+    const updates = {};
+
+    branches.forEach(b=>{
+      const colLetter = getBranchBalanceColumn(b.name);
+      if(!colLetter){ unmatched.push(b.name); return; }
+      const balCol = colToIndex(colLetter);
+      const items = dataRows
+        .filter(r => norm(r[0]) !== '')
+        .map(r => ({
+          code: norm(r[0]),
+          name: norm(r[1]),
+          category: norm(r[3]),
+          relatedTo: norm(r[11]), /* عمود L: كود بديل/مرتبط بالصنف (Related to) */
+          price: toNum(r[12]),
+          qty: toNum(r[balCol])
+        }));
+      const data = {uploadedAt: now(), fileName: file.name, items};
+      cache.main[b.id] = data;
+      updates['app_data/main/'+b.id] = data;
+      const withBalance = items.filter(it => it.qty > 0).length;
+      matched.push({name: b.name, col: colLetter, count: items.length, withBalance});
     });
-    let cursor=0;
-    const CONCURRENCY=2;
-    async function worker(){ while(cursor<branchJobs.length){ const job=branchJobs[cursor++]; await job(); await new Promise(requestAnimationFrame); } }
-    await Promise.all(Array.from({length:Math.min(CONCURRENCY,branchJobs.length)},worker));
-    rebuildChainSearchIndex(); renderBranches();
-    if(checklistEl){
-      const rowsHtml=matched.map(m=>`<tr><td>✅ ${escHtml(m.name)}</td><td class="mono">${escHtml(m.col)}</td><td>${m.count}</td><td>${m.withBalance?m.withBalance:`<span style="color:var(--red)">0 — تأكد من العمود</span>`}</td></tr>`).join('');
-      const unmatchedHtml=unmatched.map(n=>`<tr><td>🗑 ${escHtml(n)}</td><td colspan="3" style="color:var(--ink-soft)">تم حذف بيانات الليستة القديمة لهذا الفرع</td></tr>`).join('');
-      checklistEl.innerHTML=`<div class="table-wrap" style="margin-top:10px"><table class="rep-table"><thead><tr><th>الفرع</th><th>العمود</th><th>عدد الأصناف</th><th>أصناف برصيد &gt; 0</th></tr></thead><tbody>${rowsHtml}${unmatchedHtml}</tbody></table></div>`;
+
+    /* Unified replacement: delete the old parent first, wait for Firebase, then write the new sheet immediately. */
+    removePendingMainOutboxOps();
+    try{
+      await firebase.database().ref('app_data/main').remove();
+      await firebaseBatchWriteNow(updates);
+    }catch(writeErr){
+      console.error('Unified main immediate Firebase write failed:', writeErr);
+      firebaseBatchWrite(updates); /* guaranteed eventual fallback */
+      throw writeErr;
     }
-    await markTempDataReceived();
-    if(statusEl) statusEl.innerHTML=`✅ تم اعتماد الليستة الجديدة ومزامنتها فعليًا مع Firebase — ${matched.length} فرع`;
-    toast('✅ تم اعتماد الليستة الجديدة ومزامنتها مع Firebase');
+
+    renderBranches();
+    if(statusEl) statusEl.innerHTML = `✅ تم رفع الليستة الموحدة ومزامنتها فورًا مع Firebase — ${matched.length} فرع`;
+
+    if(checklistEl){
+      const rowsHtml = matched.map(m => `
+        <tr>
+          <td>✅ ${escHtml(m.name)}</td>
+          <td class="mono">${escHtml(m.col)}</td>
+          <td>${m.count}</td>
+          <td>${m.withBalance ? m.withBalance : `<span style="color:var(--red)">0 — تأكد من العمود</span>`}</td>
+        </tr>`).join('');
+      const unmatchedHtml = unmatched.map(n => `
+        <tr>
+          <td>⚠️ ${escHtml(n)}</td>
+          <td colspan="3" style="color:var(--amber)">لا يوجد عمود رصيد محدد لهذا الفرع — لم يُحدَّث</td>
+        </tr>`).join('');
+      checklistEl.innerHTML = `
+        <div class="table-wrap" style="margin-top:10px">
+          <table class="rep-table">
+            <thead><tr><th>الفرع</th><th>العمود</th><th>عدد الأصناف</th><th>أصناف برصيد &gt; 0</th></tr></thead>
+            <tbody>${rowsHtml}${unmatchedHtml}</tbody>
+          </table>
+        </div>`;
+    }
+
+    let msg = 'تم رفع الليستة الموحدة: تحديث '+matched.length+' فرع';
+    if(unmatched.length) msg += ' — بدون عمود رصيد محدد: '+unmatched.join('، ');
+    toast(msg);
   }catch(err){
-    console.error('Unified main replacement failed:',err);
-    if(statusEl) statusEl.innerHTML=`❌ لم يتم اعتماد الليستة الجديدة: ${err.code||err.message||'خطأ غير معروف'}`;
-    toast('❌ لم يتم اعتماد الليستة الجديدة',true);
-  }finally{ unifiedMainOperationBusy=false; input.value=''; }
+    console.error(err);
+    const isWrite = err && (err.code || /Firebase|timeout|permission/i.test(String(err.message||'')));
+    toast(isWrite ? 'حدث خطأ أثناء مزامنة الليستة مع Firebase' : 'حدث خطأ أثناء قراءة الملف');
+  }finally{
+    unifiedMainOperationBusy = false;
+    input.value='';
+  }
 }
 
 /* Column indices: A=0,B=1,C=2 ... M=12, P=15 */
