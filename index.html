@@ -447,27 +447,143 @@ function detachDataListener(){
   }
 }
 
-function firebaseWrite(path, value){
-  firebase.database().ref(path).set(value).catch(err=>{
-    console.error('Firebase write error:', path, err);
-    toast('حدث خطأ أثناء الحفظ فى Firebase — تأكد من الاتصال بالإنترنت');
-  });
+/* ===================== OFFLINE SAVE QUEUE =====================
+   كل عملية كتابة/حذف تتسجل محليًا أولًا. لو Firebase غير متاح، العملية لا تضيع
+   ولا تعتمد على بقاء الصفحة أو بقاء المستخدم Logged-in. عند عودة الاتصال أو فتح
+   الموقع مرة أخرى يتم تفريغ الطابور تلقائيًا. */
+const PENDING_WRITES_KEY = 'branches_inventory_pending_firebase_writes_v2';
+let pendingWriteBusy = false;
+let pendingRetryTimer = null;
+let pendingLastToast = 0;
+
+function getPendingWrites(){
+  try{
+    const v = localStorage.getItem(PENDING_WRITES_KEY);
+    return v ? JSON.parse(v) : [];
+  }catch(e){
+    console.error('Pending queue read error:', e);
+    return [];
+  }
 }
-/* كتابة عدة مسارات دفعة واحدة (بدل عدة كتابات منفصلة) — بتقلل عدد المرات اللي بيعاد فيها
-   تحميل كل بيانات فايربيز عن طريق مستمع app_data، وبالتالي بتقلل "الوقوف/الانتظار" بشكل كبير */
+function setPendingWrites(list){
+  try{ localStorage.setItem(PENDING_WRITES_KEY, JSON.stringify(list)); }
+  catch(e){ console.error('Pending queue write error:', e); }
+}
+function pendingCount(){ return getPendingWrites().length; }
+
+function queueFirebaseOperation(type, path, value){
+  const list = getPendingWrites();
+  const op = { id: uid(), type, path, value: type === 'remove' ? null : value, createdAt: now(), attempts: 0 };
+
+  // آخر تعديل لنفس المسار هو المهم؛ يمنع تراكم عشرات النسخ القديمة من نفس البيانات.
+  const filtered = list.filter(x => x.path !== path);
+  filtered.push(op);
+  setPendingWrites(filtered);
+  updatePendingSaveIndicator();
+  schedulePendingFlush(250);
+}
+
+function updatePendingSaveIndicator(){
+  const count = pendingCount();
+  let el = document.getElementById('pendingSaveIndicator');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'pendingSaveIndicator';
+    el.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:99999;padding:8px 12px;border-radius:999px;background:#fff3cd;color:#856404;border:1px solid #ffe69c;font-size:12px;font-weight:800;box-shadow:0 4px 14px rgba(0,0,0,.08);display:none';
+    document.body.appendChild(el);
+  }
+  if(count){
+    el.textContent = '🟡 عمليات تنتظر المزامنة: ' + count;
+    el.style.display = 'block';
+  }else{
+    el.style.display = 'none';
+  }
+}
+
+function schedulePendingFlush(delay=1000){
+  clearTimeout(pendingRetryTimer);
+  pendingRetryTimer = setTimeout(flushPendingWrites, Math.max(100, delay));
+}
+
+async function flushPendingWrites(){
+  if(pendingWriteBusy) return;
+  const list = getPendingWrites();
+  if(!list.length) { updatePendingSaveIndicator(); return; }
+  pendingWriteBusy = true;
+
+  try{
+    // لو Firebase نفسه يقول إننا Offline، ننتظر رجوعه بدل ما نستهلك المحاولات.
+    if(!navigator.onLine){
+      schedulePendingFlush(5000);
+      return;
+    }
+
+    for(const op of list){
+      try{
+        op.attempts = (op.attempts || 0) + 1;
+        const ref = firebase.database().ref(op.path);
+        if(op.type === 'remove') await ref.remove();
+        else await ref.set(op.value);
+
+        // نحذف العملية فقط بعد نجاح Firebase فعليًا.
+        const current = getPendingWrites();
+        const next = current.filter(x => x.id !== op.id);
+        setPendingWrites(next);
+        updatePendingSaveIndicator();
+      }catch(err){
+        console.error('Pending Firebase operation failed:', op.path, err);
+        // نوقف الدورة الحالية ونرجع نحاول لاحقًا؛ لا نحذف العملية.
+        break;
+      }
+    }
+  }finally{
+    pendingWriteBusy = false;
+    const remaining = pendingCount();
+    updatePendingSaveIndicator();
+    if(remaining){
+      // Backoff بسيط: 2s ثم 4s ثم حتى 30s كحد أقصى.
+      const first = getPendingWrites()[0];
+      const attempts = first ? (first.attempts || 1) : 1;
+      const delay = Math.min(30000, 2000 * Math.pow(2, Math.min(attempts-1, 4)));
+      schedulePendingFlush(delay);
+      const t = now();
+      if(t - pendingLastToast > 15000){
+        pendingLastToast = t;
+        toast('🟡 البيانات محفوظة محليًا — سيتم إرسالها إلى Firebase تلقائيًا عند عودة الاتصال');
+      }
+    }
+  }
+}
+
+function firebaseWrite(path, value){
+  // نسجل العملية محليًا أولًا، وبالتالي لا يوجد سيناريو تضيع فيه البيانات بسبب انقطاع الاتصال.
+  queueFirebaseOperation('set', path, value);
+  flushPendingWrites();
+}
+
+/* كتابة عدة مسارات دفعة واحدة، مع نفس ضمان عدم فقدان البيانات عند انقطاع الاتصال. */
 function firebaseBatchWrite(updates){
   if(!updates || !Object.keys(updates).length) return;
-  firebase.database().ref().update(updates).catch(err=>{
-    console.error('Firebase batch write error:', err);
-    toast('حدث خطأ أثناء الحفظ فى Firebase — تأكد من الاتصال بالإنترنت');
-  });
+  Object.keys(updates).forEach(path => queueFirebaseOperation('set', path, updates[path]));
+  flushPendingWrites();
 }
+
 function firebaseRemove(path){
-  firebase.database().ref(path).remove().catch(err=>{
-    console.error('Firebase remove error:', path, err);
-    toast('حدث خطأ أثناء الحذف فى Firebase — تأكد من الاتصال بالإنترنت');
-  });
+  queueFirebaseOperation('remove', path, null);
+  flushPendingWrites();
 }
+
+window.addEventListener('online', ()=>{
+  toast('✅ عاد الاتصال — جارٍ مزامنة البيانات المعلقة...');
+  schedulePendingFlush(200);
+});
+window.addEventListener('offline', ()=>{
+  updatePendingSaveIndicator();
+  toast('⚠️ لا يوجد اتصال — البيانات الجديدة محفوظة محليًا وسيتم إرسالها تلقائيًا لاحقًا');
+});
+
+// يبدأ التفريغ عند فتح الموقع حتى لو كانت العمليات المعلقة من جلسة/تسجيل دخول سابقة.
+setTimeout(()=>{ updatePendingSaveIndicator(); flushPendingWrites(); }, 500);
 
 function getBranches(){ return cache.branches || []; }
 function saveBranches(b){ cache.branches = b; firebaseWrite('app_data/branches', b); }
