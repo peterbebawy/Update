@@ -10,7 +10,19 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-<script src="firebase-config.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCUT5f-IYbJxY7Hmxz4VAI4pDvoF-7WaKM",
+  authDomain: "update-app-b7418.firebaseapp.com",
+  databaseURL: "https://update-app-b7418-default-rtdb.firebaseio.com",
+  projectId: "update-app-b7418",
+  storageBucket: "update-app-b7418.firebasestorage.app",
+  messagingSenderId: "645859577514",
+  appId: "1:645859577514:web:fdf234ac8d6a745b86cad3",
+  measurementId: "G-ZXYPX4F1DY"
+};
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -305,33 +317,41 @@ function attachDataListener(){
 
   const db = firebase.database();
 
-  // بيانات المخزون تظل في Firebase الخاص بـ Website 2.
-  // الفروع الموجودة قد تكون محفوظة في app_data/branches أو في branches
-  // (الـ branches هنا يتم قراءتها فقط ولا يتم نسخها إلى Website 1).
-  let appDataValue = null;
-  let rootBranchesValue = null;
+  // Website 2 has its own Firebase. Read branches from that database only.
+  // Support the two possible branch locations without syncing anything
+  // back to Website 1.
+  let appData = {};
+  let rootBranches = null;
 
-  function refreshFromFirebase(){
-    const appData = appDataValue || {};
-    const rootBranches = rootBranchesValue;
+  function asBranchArray(value){
+    if(Array.isArray(value)){
+      return value.map((b, i) => ({
+        id: b && b.id ? b.id : String(i),
+        ...(b || {})
+      })).filter(b => b && b.name);
+    }
+    if(value && typeof value === 'object'){
+      return Object.entries(value).map(([id, b]) => ({
+        id,
+        ...(b || {})
+      })).filter(b => b && b.name);
+    }
+    return [];
+  }
 
-    const appBranches = Array.isArray(appData.branches)
-      ? appData.branches
-      : (appData.branches && typeof appData.branches === 'object'
-          ? Object.values(appData.branches) : []);
+  function refreshInventory(){
+    const appBranches = asBranchArray(appData.branches);
+    const rootList = asBranchArray(rootBranches);
 
-    const rootBranchesList = Array.isArray(rootBranches)
-      ? rootBranches
-      : (rootBranches && typeof rootBranches === 'object'
-          ? Object.entries(rootBranches).map(([id, value]) => ({id, ...(value || {})}))
-          : []);
-
-    // لو Firebase الخاص بمخزون الفروع فيه branches في الجذر، اعرضها.
-    // ولو فيه app_data/branches، اعرضها أيضًا. نفضل app_data عند وجوده.
-    const branches = appBranches.length ? appBranches : rootBranchesList;
+    // Prefer app_data/branches when it contains branches; otherwise use
+    // branches at the root of Website 2's Firebase.
+    const branches = appBranches.length ? appBranches : rootList;
 
     cache = normalizeCache(appData);
     cache.branches = branches;
+
+    console.log('[Website 2] Firebase project:', firebase.app().options.projectId);
+    console.log('[Website 2] branches loaded:', branches.length, branches);
 
     expireOldReports();
     renderBranches();
@@ -343,20 +363,19 @@ function attachDataListener(){
     if(chainInput && chainInput.value) runSearchChain(chainInput.value);
   }
 
-  db.ref('app_data').on('value', snapshot=>{
-    appDataValue = snapshot.val() || {};
-    refreshFromFirebase();
-  }, err=>{
-    console.error('Firebase app_data sync error:', err);
-    toast('تعذر قراءة بيانات مخزون الفروع من Firebase');
+  db.ref('app_data').on('value', snap => {
+    appData = snap.val() || {};
+    refreshInventory();
+  }, err => {
+    console.error('[Website 2] app_data read error:', err);
+    toast('تعذر قراءة بيانات Firebase الخاصة بالمخزون');
   });
 
-  db.ref('branches').on('value', snapshot=>{
-    rootBranchesValue = snapshot.val();
-    refreshFromFirebase();
-  }, err=>{
-    // لا نوقف النظام إذا كان هذا المسار غير موجود أو غير مسموح.
-    console.warn('Firebase root branches read:', err);
+  db.ref('branches').on('value', snap => {
+    rootBranches = snap.val();
+    refreshInventory();
+  }, err => {
+    console.warn('[Website 2] root branches read error:', err);
   });
 }
 function detachDataListener(){
