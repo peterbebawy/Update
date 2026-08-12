@@ -7,13 +7,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+
+
+
+
+
 
 
 
@@ -51,6 +51,7 @@
   <div class="user-chip">
     <span id="userEmailLabel"></span>
   </div>
+  <div id="firebaseStatus" class="firebase-status offline" title="Realtime Database: update-app-b7418">● Firebase جاري الفحص...</div>
 </header>
 
 <main>
@@ -74,7 +75,6 @@
         <button class="btn btn-danger btn-sm" onclick="clearAllMain()">🗑 حذف الشيت من كل الفروع</button>
       </div>
       <div class="status" id="unifiedMainStatus"></div>
-      <div class="hint" style="margin-top:8px">بيانات الشيت والريبورتات مؤقتة ويمكن تنظيفها تلقائيًا بعد ساعة من آخر رفع؛ قائمة النواقص لا يتم حذفها بواسطة هذا النظام.</div>
       <div id="unifiedMainChecklist"></div>
     </div>
 
@@ -165,6 +165,10 @@
 </div><!-- /appRoot -->
 
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="inventory.js"></script>
 </body>
 </html>
