@@ -448,7 +448,7 @@ function openInventoryPortal(user){
   }
 
   // Load the separated Website 2 page from GitHub Pages.
-  const target='inventory.html?v=2';
+  const target='inventory.html?v=diag-20260812-1';
   if(frame.getAttribute('src') !== target){
     frame.src=target;
   }else{
