@@ -439,10 +439,19 @@ function openInventoryPortal(user){
     } catch(e) { console.error('Inventory page load error', e); }
   }
   const payload={type:'sharedInventoryLogin',user:user,permissions:user.permissions||{}};
+  // خزّن آخر جلسة مخزون حتى نقدر نعيد إرسالها فورًا عندما يعلن iframe أنه جاهز.
+  window.__inventoryLoginPayload = payload;
   const send=()=>{ try{ if(frame.contentWindow) frame.contentWindow.postMessage(payload, '*'); }catch(e){} };
-  // أرسل فورًا ثم أعد الإرسال عدة مرات؛ لأن iframe المدمج قد يكون تم تحميله قبل اختيار النظام.
+  // إرسال فوري + retries قصيرة.
   send();
-  [100,300,700,1200,2000].forEach(ms=>setTimeout(send,ms));
+  [100,300,700,1200,2000,3500,5000].forEach(ms=>setTimeout(send,ms));
+  // الأهم: inventory.html يرسل inventoryReady بعد تحميل JS. نرسل الجلسة فور وصول الرسالة بدل الاعتماد على توقيت ثابت.
+  if(!frame.__inventoryLoadHooked){
+    frame.addEventListener('load', ()=>{ setTimeout(()=>{
+      try{ if(frame.contentWindow) frame.contentWindow.postMessage(window.__inventoryLoginPayload, '*'); }catch(e){}
+    }, 50); });
+    frame.__inventoryLoadHooked=true;
+  }
 }
 function closeInventoryPortal(){
   const portal=document.getElementById('inventoryPortal'); if(portal) portal.style.display='none';
@@ -459,6 +468,13 @@ function closeInventoryPortal(){
 }
 window.addEventListener('message', function(event){
   if(!event || !event.data) return;
+  if(event.data.type==='inventoryReady'){
+    const frame=document.getElementById('inventoryFrame');
+    if(frame && frame.contentWindow && window.__inventoryLoginPayload){
+      try{ frame.contentWindow.postMessage(window.__inventoryLoginPayload, '*'); }catch(e){}
+    }
+    return;
+  }
   if(event.data.type==='inventoryLogout'){ try { localStorage.removeItem('selectedPortal'); } catch(e) {} closeInventoryPortal(); return; }
   if(event.data.type==='inventoryChangePassword'){
     const data=event.data || {};
