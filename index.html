@@ -455,12 +455,9 @@ function firebaseWrite(path, value){
 }
 /* كتابة عدة مسارات دفعة واحدة (بدل عدة كتابات منفصلة) — بتقلل عدد المرات اللي بيعاد فيها
    تحميل كل بيانات فايربيز عن طريق مستمع app_data، وبالتالي بتقلل "الوقوف/الانتظار" بشكل كبير */
-function firebaseBatchWrite(updates){
+async function firebaseBatchWrite(updates){
   if(!updates || !Object.keys(updates).length) return;
-  firebase.database().ref().update(updates).catch(err=>{
-    console.error('Firebase batch write error:', err);
-    toast('حدث خطأ أثناء الحفظ فى Firebase — تأكد من الاتصال بالإنترنت');
-  });
+  return firebase.database().ref().update(updates);
 }
 function firebaseRemove(path){
   firebase.database().ref(path).remove().catch(err=>{
@@ -825,10 +822,33 @@ async function handleUnifiedMainUpload(input){
       matched.push({name: b.name, col: colLetter, count: items.length, withBalance});
     });
 
-    firebaseBatchWrite(updates);
+    if(!Object.keys(updates).length){
+      throw new Error('لا توجد بيانات فروع مطابقة للحفظ');
+    }
+
+    /* نحاول الحفظ دفعة واحدة أولاً. لو Firebase رفضت الطلب بسبب حجم العملية،
+       نعيد المحاولة فرعًا فرعًا حتى لا تضيع كل عملية الرفع الموحد. */
+    try{
+      await firebaseBatchWrite(updates);
+    }catch(batchErr){
+      console.warn('Firebase batch write failed, retrying branch by branch:', batchErr);
+      const failed = [];
+      for(const b of branches){
+        if(!Object.prototype.hasOwnProperty.call(updates, 'app_data/main/'+b.id)) continue;
+        try{
+          await firebase.database().ref('app_data/main/'+b.id).set(updates['app_data/main/'+b.id]);
+        }catch(branchErr){
+          console.error('Firebase branch write error:', b.name, branchErr);
+          failed.push(b.name);
+        }
+      }
+      if(failed.length){
+        throw new Error('تعذر حفظ بيانات: '+failed.join('، '));
+      }
+    }
 
     renderBranches();
-    if(statusEl) statusEl.innerHTML = `آخر رفع: ${fmtDate(now())} — تم تحديث ${matched.length} فرع`;
+    if(statusEl) statusEl.innerHTML = `آخر رفع: ${fmtDate(now())} — تم الحفظ بنجاح وتحديث ${matched.length} فرع`;
 
     if(checklistEl){
       const rowsHtml = matched.map(m => `
@@ -856,8 +876,9 @@ async function handleUnifiedMainUpload(input){
     if(unmatched.length) msg += ' — بدون عمود رصيد محدد: '+unmatched.join('، ');
     toast(msg);
   }catch(err){
-    console.error(err);
-    toast('حدث خطأ أثناء قراءة الملف');
+    console.error('Unified upload error:', err);
+    const msg = err && err.message ? err.message : 'خطأ غير معروف';
+    toast('لم يتم الحفظ فى Firebase: '+msg);
   }
   input.value='';
 }
@@ -918,6 +939,35 @@ function addShortageRow(branchId){
   s.updatedAt = now();
   saveShortage(branchId, s);
   renderBranches(branchId);
+}
+
+/* إضافة صنف واحد سريعًا إلى ليستة نواقص الفرع */
+function addSingleShortage(branchId){
+  const input = document.getElementById('singleShortageCode-'+branchId);
+  if(!input) return;
+  const code = norm(input.value);
+  if(!code){
+    toast('من فضلك أدخل كود الصنف أولاً');
+    input.focus();
+    return;
+  }
+  const s = getShortage(branchId);
+  if(s.items.some(it => norm(it.code) === code)){
+    toast('هذا الصنف موجود بالفعل في ليستة النواقص');
+    input.select();
+    return;
+  }
+  s.items.push({code});
+  s.updatedAt = now();
+  saveShortage(branchId, s);
+  toast('تمت إضافة الصنف إلى ليستة النواقص');
+  renderBranches(branchId);
+}
+function handleSingleShortageKeydown(e, branchId){
+  if(e.key === 'Enter'){
+    e.preventDefault();
+    addSingleShortage(branchId);
+  }
 }
 function updateShortageCell(branchId, idx, field, value){
   const s = getShortage(branchId);
@@ -1728,6 +1778,10 @@ function renderBranchBody(b){
           <div class="row-check"><input type="checkbox" id="shortHeader-${b.id}" checked> <label for="shortHeader-${b.id}">الصف الأول عناوين</label></div>
           <input type="file" accept=".xlsx,.xls,.csv" onchange="handleShortageUpload('${b.id}', this)">
           <div class="status">${shortage.items.length ? `آخر تحديث: ${fmtDate(shortage.updatedAt)} — ${shortage.items.length} صنف` : 'لا توجد ليستة نواقص'}</div>
+          <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+            <input id="singleShortageCode-${b.id}" class="code-search" style="margin:0; flex:1" placeholder="أدخل كود صنف لإضافته سريعًا..." onkeydown="handleSingleShortageKeydown(event, '${b.id}')">
+            <button class="btn btn-accent btn-sm" style="white-space:nowrap" onclick="addSingleShortage('${b.id}')">+ إضافة صنف</button>
+          </div>
           ${noBalanceCodes.length ? `<button class="btn btn-danger btn-sm" style="margin-top:8px; width:100%" onclick="deleteNoBalanceShortage('${b.id}')">🗑 حذف ${noBalanceCodes.length} صنف بدون رصيد</button>` : ''}
           ${duplicateShortageCount ? `<button class="btn btn-danger btn-sm" style="margin-top:8px; width:100%" onclick="dedupeShortage('${b.id}')">🗑 حذف ${duplicateShortageCount} كود مكرر</button>` : ''}
           <input class="code-search" placeholder="ابحث بالكود أو الاسم..." oninput="filterShortageTable('${b.id}', this.value)">
